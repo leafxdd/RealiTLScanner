@@ -1,7 +1,7 @@
 FROM golang:1.22-alpine AS build
 WORKDIR /src
 COPY . .
-RUN go build -o RealiTLScanner .
+RUN go build -o RealiTLScanner ./cmd/realitlscanner
 
 FROM alpine:latest
 RUN apk add --no-cache ca-certificates

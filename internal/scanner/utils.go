@@ -1,4 +1,4 @@
-package main
+package scanner
 
 import (
 	"bufio"
@@ -12,49 +12,35 @@ import (
 	"net/netip"
 	"regexp"
 	"strings"
+
+	"github.com/xtls/RealiTLScanner/internal/types"
 )
 
-const (
-	_ = iota
-	HostTypeIP
-	HostTypeCIDR
-	HostTypeDomain
-)
-
-type HostType int
-
-type Host struct {
-	IP     net.IP
-	Origin string
-	Type   HostType
-}
-
-func Iterate(reader io.Reader) <-chan Host {
-	scanner := bufio.NewScanner(reader)
-	hostChan := make(chan Host)
+func Iterate(reader io.Reader, enableIPv6 bool) <-chan types.Host {
+	s := bufio.NewScanner(reader)
+	hostChan := make(chan types.Host)
 	go func() {
 		defer close(hostChan)
-		for scanner.Scan() {
-			line := strings.TrimSpace(scanner.Text())
+		for s.Scan() {
+			line := strings.TrimSpace(s.Text())
 			if line == "" {
 				continue
 			}
 			ip := net.ParseIP(line)
 			if ip != nil && (ip.To4() != nil || enableIPv6) {
-				// ip address
-				hostChan <- Host{
+				hostChan <- types.Host{
 					IP:     ip,
 					Origin: line,
-					Type:   HostTypeIP,
+					Type:   types.HostTypeIP,
 				}
 				continue
 			}
 			_, _, err := net.ParseCIDR(line)
 			if err == nil {
-				// ip cidr
 				p, err := netip.ParsePrefix(line)
 				if err != nil {
 					slog.Warn("Invalid cidr", "cidr", line, "err", err)
+					continue
 				}
 				if !p.Addr().Is4() && !enableIPv6 {
 					continue
@@ -67,10 +53,10 @@ func Iterate(reader io.Reader) <-chan Host {
 					}
 					ip = net.ParseIP(addr.String())
 					if ip != nil {
-						hostChan <- Host{
+						hostChan <- types.Host{
 							IP:     ip,
 							Origin: line,
-							Type:   HostTypeCIDR,
+							Type:   types.HostTypeCIDR,
 						}
 					}
 					addr = addr.Next()
@@ -78,49 +64,31 @@ func Iterate(reader io.Reader) <-chan Host {
 				continue
 			}
 			if ValidateDomainName(line) {
-				// domain
-				hostChan <- Host{
+				hostChan <- types.Host{
 					IP:     nil,
 					Origin: line,
-					Type:   HostTypeDomain,
+					Type:   types.HostTypeDomain,
 				}
 				continue
 			}
 			slog.Warn("Not a valid IP, IP CIDR or domain", "line", line)
 		}
-		if err := scanner.Err(); err != nil && !errors.Is(err, io.EOF) {
+		if err := s.Err(); err != nil && !errors.Is(err, io.EOF) {
 			slog.Error("Read file error", "err", err)
 		}
 	}()
 	return hostChan
 }
-func ValidateDomainName(domain string) bool {
-	r := regexp.MustCompile(`(?m)^[A-Za-z0-9\-.]+$`)
-	return r.MatchString(domain)
-}
-func ExistOnlyOne(arr []string) bool {
-	exist := false
-	for _, item := range arr {
-		if item != "" {
-			if exist {
-				return false
-			} else {
-				exist = true
-			}
-		}
-	}
-	return exist
-}
-func IterateAddr(addr string) <-chan Host {
-	hostChan := make(chan Host)
+
+func IterateAddr(addr string, enableIPv6 bool) <-chan types.Host {
+	hostChan := make(chan types.Host)
 	_, _, err := net.ParseCIDR(addr)
 	if err == nil {
-		// is CIDR
-		return Iterate(strings.NewReader(addr))
+		return Iterate(strings.NewReader(addr), enableIPv6)
 	}
 	ip := net.ParseIP(addr)
 	if ip == nil {
-		ip, err = LookupIP(addr)
+		ip, err = LookupIP(addr, enableIPv6)
 		if err != nil {
 			close(hostChan)
 			slog.Error("Not a valid IP, IP CIDR or domain", "addr", addr)
@@ -131,32 +99,33 @@ func IterateAddr(addr string) <-chan Host {
 		slog.Info("Enable infinite mode", "init", ip.String())
 		lowIP := ip
 		highIP := ip
-		hostChan <- Host{
+		hostChan <- types.Host{
 			IP:     ip,
 			Origin: addr,
-			Type:   HostTypeIP,
+			Type:   types.HostTypeIP,
 		}
 		for i := 0; i < math.MaxInt; i++ {
 			if i%2 == 0 {
 				lowIP = NextIP(lowIP, false)
-				hostChan <- Host{
+				hostChan <- types.Host{
 					IP:     lowIP,
 					Origin: lowIP.String(),
-					Type:   HostTypeIP,
+					Type:   types.HostTypeIP,
 				}
 			} else {
 				highIP = NextIP(highIP, true)
-				hostChan <- Host{
+				hostChan <- types.Host{
 					IP:     highIP,
 					Origin: highIP.String(),
-					Type:   HostTypeIP,
+					Type:   types.HostTypeIP,
 				}
 			}
 		}
 	}()
 	return hostChan
 }
-func LookupIP(addr string) (net.IP, error) {
+
+func LookupIP(addr string, enableIPv6 bool) (net.IP, error) {
 	ips, err := net.LookupIP(addr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to lookup: %w", err)
@@ -172,6 +141,25 @@ func LookupIP(addr string) (net.IP, error) {
 	}
 	return arr[0], nil
 }
+
+func ValidateDomainName(domain string) bool {
+	r := regexp.MustCompile(`(?m)^[A-Za-z0-9\-.]+$`)
+	return r.MatchString(domain)
+}
+
+func ExistOnlyOne(arr []string) bool {
+	exist := false
+	for _, item := range arr {
+		if item != "" {
+			if exist {
+				return false
+			}
+			exist = true
+		}
+	}
+	return exist
+}
+
 func RemoveDuplicateStr(strSlice []string) []string {
 	allKeys := make(map[string]bool)
 	var list []string
@@ -183,25 +171,21 @@ func RemoveDuplicateStr(strSlice []string) []string {
 	}
 	return list
 }
-func OutWriter(writer io.Writer) chan<- string {
-	ch := make(chan string)
-	go func() {
-		for s := range ch {
-			_, _ = io.WriteString(writer, s)
-		}
-	}()
-	return ch
+
+func CsvEscape(field string) string {
+	if strings.ContainsAny(field, ",\"\n\r") {
+		return "\"" + strings.ReplaceAll(field, "\"", "\"\"") + "\""
+	}
+	return field
 }
+
 func NextIP(ip net.IP, increment bool) net.IP {
-	// Convert to big.Int and increment
 	ipb := big.NewInt(0).SetBytes(ip)
 	if increment {
 		ipb.Add(ipb, big.NewInt(1))
 	} else {
 		ipb.Sub(ipb, big.NewInt(1))
 	}
-
-	// Add leading zeros
 	b := ipb.Bytes()
 	b = append(make([]byte, len(ip)-len(b)), b...)
 	return b
