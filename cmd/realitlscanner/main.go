@@ -209,18 +209,19 @@ func runScan(args []string) {
 		mode = pipeline.ModeBatch
 	}
 
+	progress := output.NewProgress(os.Stderr)
+
 	pipeCfg := pipeline.Config{
 		ScanWorkers:   thread,
 		DetectWorkers: thread,
 		Mode:          mode,
 		ScanConfig:    cfg,
+		OnScan:        progress.IncScanned,
 	}
 
 	p := pipeline.New(pipeCfg, geoReader, runner)
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
-
-	progress := output.NewProgress(os.Stderr)
 
 	outCh, err := p.Run(ctx, hostChan)
 	if err != nil {

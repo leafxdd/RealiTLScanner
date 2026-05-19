@@ -23,6 +23,7 @@ type Config struct {
 	DetectWorkers int
 	Mode          Mode
 	ScanConfig    scanner.ScanConfig
+	OnScan        func() // called for every scan attempt
 }
 
 type Pipeline struct {
@@ -58,6 +59,9 @@ func (p *Pipeline) Run(ctx context.Context, hosts <-chan types.Host) (<-chan *ty
 				default:
 				}
 				result := scanner.ScanTLS(ctx, host, p.cfg.ScanConfig, p.geo)
+				if p.cfg.OnScan != nil {
+					p.cfg.OnScan()
+				}
 				if result.Feasible {
 					scanResultCh <- result
 				}

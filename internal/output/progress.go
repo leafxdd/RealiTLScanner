@@ -37,6 +37,14 @@ func (p *Progress) IncFeasible() {
 	p.feasible.Add(1)
 }
 
+func (p *Progress) Scanned() int64 {
+	return p.scanned.Load()
+}
+
+func (p *Progress) Feasible() int64 {
+	return p.feasible.Load()
+}
+
 func (p *Progress) Stop() {
 	p.ticker.Stop()
 	close(p.done)

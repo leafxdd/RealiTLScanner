@@ -6,38 +6,38 @@ import (
 )
 
 type TLSInfo struct {
-	Version    uint16
-	ALPN       string
-	CertDomain string
-	CertIssuer string
+	Version    uint16 `json:"version"`
+	ALPN       string `json:"alpn"`
+	CertDomain string `json:"cert_domain"`
+	CertIssuer string `json:"cert_issuer"`
 }
 
 type CDNResult struct {
-	Level      string
-	Confidence float64
-	Keywords   []string
+	Level      string   `json:"level"`
+	Confidence float64  `json:"confidence"`
+	Keywords   []string `json:"keywords,omitempty"`
 }
 
 type GFWResult struct {
-	Blocked bool
-	Source  string
+	Blocked bool   `json:"blocked"`
+	Source  string `json:"source"`
 }
 
 type RedirectResult struct {
-	Redirects  bool
-	Target     string
-	StatusCode int
+	Redirects  bool   `json:"redirects"`
+	Target     string `json:"target,omitempty"`
+	StatusCode int    `json:"status_code"`
 }
 
 type HotSiteResult struct {
-	IsHot    bool
-	Category string
+	IsHot    bool   `json:"is_hot"`
+	Category string `json:"category,omitempty"`
 }
 
 type CertValidResult struct {
-	Valid     bool
-	SNIMatch  bool
-	ExpiresAt time.Time
+	Valid     bool      `json:"valid"`
+	SNIMatch  bool     `json:"sni_match"`
+	ExpiresAt time.Time `json:"expires_at,omitempty"`
 }
 
 type ScanResult struct {
