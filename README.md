@@ -45,7 +45,12 @@ Scan IP range and output domains to CSV file:
 
 # Save to file (default: out.csv):
 ./RealiTLScanner -addr 1.2.3.0/24 -out results.csv
+
+# Continue even if GeoIP download fails:
+./RealiTLScanner -addr 1.2.3.0/24 -skip-download
 ```
+
+On first run, `Country.mmdb` (GeoIP database) is automatically downloaded. If download fails, the program stops by default. Use `-skip-download` to continue without GeoIP.
 
 ### Scan with Detection (`scan`)
 
@@ -72,6 +77,8 @@ Scan domains and evaluate feasibility with formatted table output:
 ```
 
 Data files (gfwlist, Country.mmdb) are automatically downloaded on first `scan` run. If download fails, the program stops by default. Use `-skip-download` to continue with limited detection.
+
+Note: Basic mode (without `scan`) only downloads `Country.mmdb`. The `scan` command additionally downloads `gfwlist.conf` for GFW detection.
 
 #### Output Example
 
@@ -135,22 +142,21 @@ docker run --rm realitlscanner scan -addr 1.1.1.0/24
 docker run --rm realitlscanner scan apple.com www.tesla.com
 ```
 
-## GeoIP
-
-Place a MaxMind GeoLite2/GeoIP2 Country Database named `Country.mmdb` in the working directory. Download from [here](https://github.com/Loyalsoldier/geoip/releases/latest/download/Country.mmdb).
-
 ## Data Files
 
-Detection features use the following data files:
+Required data files are **automatically downloaded** on first run:
 
-| File | Purpose | Source |
-|------|---------|--------|
-| `Country.mmdb` | GeoIP lookup | [Loyalsoldier/geoip](https://github.com/Loyalsoldier/geoip/releases) |
-| `gfwlist.conf` | GFW block detection | [Loyalsoldier/clash-rules](https://github.com/Loyalsoldier/clash-rules) |
-| `cdn_keywords.txt` | CDN detection | Built-in (embedded) |
-| `hot_websites.txt` | Hot website detection | Built-in (embedded) |
+| File | Used By | Purpose | Source |
+|------|---------|---------|--------|
+| `Country.mmdb` | Basic + Scan | GeoIP lookup | [Loyalsoldier/geoip](https://github.com/Loyalsoldier/geoip/releases) |
+| `gfwlist.conf` | Scan only | GFW block detection | [Loyalsoldier/clash-rules](https://github.com/Loyalsoldier/clash-rules) |
+| `cdn_keywords.txt` | Scan only | CDN detection | Built-in (embedded) |
+| `hot_websites.txt` | Scan only | Hot website detection | Built-in (embedded) |
 
-CDN keywords and hot websites are embedded in the binary. GeoIP and GFW list are downloaded on first use.
+- Basic mode downloads: `Country.mmdb`
+- Scan mode downloads: `Country.mmdb` + `gfwlist.conf`
+- CDN keywords and hot websites are embedded in the binary (no download needed)
+- Use `-skip-download` to continue if download fails
 
 ## Project Structure
 
