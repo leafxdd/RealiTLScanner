@@ -48,15 +48,16 @@ func routeSubcommand(cmd string, args []string) {
 func runLegacy(args []string) {
 	fs := flag.NewFlagSet("realitlscanner", flag.ExitOnError)
 	var (
-		addr       string
-		in         string
-		port       int
-		thread     int
-		out        string
-		timeout    int
-		verbose    bool
-		enableIPv6 bool
-		url        string
+		addr         string
+		in           string
+		port         int
+		thread       int
+		out          string
+		timeout      int
+		verbose      bool
+		enableIPv6   bool
+		url          string
+		skipDownload bool
 	)
 
 	fs.StringVar(&addr, "addr", "", "Specify an IP, IP CIDR or domain to scan")
@@ -68,6 +69,7 @@ func runLegacy(args []string) {
 	fs.BoolVar(&verbose, "v", false, "Verbose output")
 	fs.BoolVar(&enableIPv6, "46", false, "Enable IPv6")
 	fs.StringVar(&url, "url", "", "Crawl domain list from URL")
+	fs.BoolVar(&skipDownload, "skip-download", false, "Continue even if data file download fails")
 	_ = fs.Parse(args)
 
 	setupLogging(verbose)
@@ -82,6 +84,18 @@ func runLegacy(args []string) {
 	hostChan := resolveHosts(addr, in, url, enableIPv6)
 	if hostChan == nil {
 		return
+	}
+
+	// Download geoip for basic scanning
+	dm := data.NewDataManager(".")
+	dlCtx := context.Background()
+	if err := dm.EnsureReady(dlCtx, "geoip"); err != nil {
+		if skipDownload {
+			slog.Warn("GeoIP download failed, geo lookup disabled", "err", err)
+		} else {
+			slog.Error("GeoIP download failed (use -skip-download to continue anyway)", "err", err)
+			return
+		}
 	}
 
 	outWriter := openOutput(out)
@@ -175,7 +189,7 @@ func runScan(args []string) {
 	// Download data files before initializing detectors
 	dm := data.NewDataManager(".")
 	ctx := context.Background()
-	if err := dm.EnsureReady(ctx, "cdn_keywords", "hot_websites", "gfwlist", "geoip"); err != nil {
+	if err := dm.EnsureReady(ctx, "gfwlist", "geoip"); err != nil {
 		if skipDownload {
 			slog.Warn("Data file download failed, continuing with limited detection", "err", err)
 		} else {
