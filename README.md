@@ -1,90 +1,182 @@
-# Reality - TLS - Scanner
+# RealiTLScanner
+
+A high-performance TLS certificate scanner with integrated Reality protocol domain evaluation. Scans IP/CIDR/domain targets for TLS certificates and optionally evaluates domain feasibility through multiple detectors (CDN, GFW, redirect, hot website, etc.).
+
+## Features
+
+- TLS certificate scanning (IP, CIDR, domain)
+- Concurrent scanning with configurable thread count
+- Infinity mode (auto-expand from single IP/domain)
+- GeoIP location lookup
+- **Integrated detectors**: CDN detection, GFW block detection, TLS validation, hot website identification, redirect detection
+- **Multiple output formats**: CSV, JSON, JSONL
+- **Real-time progress reporting**
+- **Subcommand CLI**: `scan`, `check`, `version`
+- Docker support
 
 ## Building
 
 Requirement: Go 1.21+
 
 ```bash
-go build
+make build
+# or
+go build -o RealiTLScanner ./cmd/realitlscanner
 ```
 
 ## Usage
 
-It is recommended to run this tool locally, as running the scanner in the cloud may cause the VPS to be flagged.
+### Basic Scanning (backward compatible)
+
 ```bash
-# Show help
-./RealiTLScanner
-
-# Scan a specific IP, IP CIDR or domain:
+# Scan a specific IP, IP CIDR or domain (infinity mode auto-enabled for single IP/domain):
 ./RealiTLScanner -addr 1.2.3.4
-# Note: infinity mode will be enabled automatically if `addr` is an IP or domain
 
-# Scan a list of targets from a file (targets should be divided by line break):
-./RealiTLScanner -in in.txt
+# Scan from file:
+./RealiTLScanner -in targets.txt
 
-# Crawl domains from a URL and scan:
+# Crawl domains from URL:
 ./RealiTLScanner -url https://launchpad.net/ubuntu/+archivemirrors
 
-# Specify a port to scan, default: 443
-./RealiTLScanner -addr 1.1.1.1 -port 443
+# Custom port, threads, timeout:
+./RealiTLScanner -addr 107.172.1.0/24 -port 443 -thread 10 -timeout 5
 
-# Show verbose output, including failed scans and infeasible targets:
+# Verbose output:
 ./RealiTLScanner -addr 1.2.3.0/24 -v
 
-# Save results to a file, default: out.csv
-./RealiTLScanner -addr www.microsoft.com -out file.csv
-
-# Set a thread count, default: 1
-./RealiTLScanner -addr wiki.ubuntu.com -thread 10
-
-# Set a timeout for each scan, default: 10 (seconds)
-./RealiTLScanner -addr 107.172.1.1/16 -timeout 5
+# Save to file:
+./RealiTLScanner -addr 1.2.3.0/24 -out results.csv
 ```
-### In docker way
-Build container by yourself (you do not needed in golonag on your host)
+
+### Scan with Detection
+
 ```bash
+# Enable all detectors (CDN, GFW, TLS check, hot website, redirect, etc.):
+./RealiTLScanner scan -addr 1.2.3.0/24 -detect
+
+# JSON output:
+./RealiTLScanner scan -addr 1.2.3.0/24 -detect -format json
+
+# JSONL output (streaming, one result per line):
+./RealiTLScanner scan -addr 1.2.3.0/24 -detect -format jsonl
+
+# Extended CSV (includes detection columns):
+./RealiTLScanner scan -addr 1.2.3.0/24 -detect -format csv-extended
+
+# Batch mode (scan all first, then detect):
+./RealiTLScanner scan -addr 1.2.3.0/24 -detect -batch
+
+# Select specific detectors:
+./RealiTLScanner scan -addr 1.2.3.0/24 -detect -detectors cdn,gfw,tls_check
+
+# Specify data files directory:
+./RealiTLScanner scan -addr 1.2.3.0/24 -detect -data-dir ./data
+```
+
+### Single Domain Check
+
+```bash
+# Full check on a single domain (scan + all detectors + formatted report):
+./RealiTLScanner check example.com
+
+# With custom port:
+./RealiTLScanner check example.com -port 8443
+```
+
+### Version
+
+```bash
+./RealiTLScanner version
+```
+
+### Docker
+
+```bash
+# Build:
 docker build -t realitlscanner .
-```
-Run and research
-```bash
-# show help
-docker run --rm realitlscanner
-# scan
+
+# Run:
 docker run --rm realitlscanner -addr 1.1.1.1
-```
-### Enable Geo IP
-
-To enable Geo IP information, place a MaxMind GeoLite2/GeoIP2 Country Database in the executing folder with the exact name `Country.mmdb`. You can download one from [here](https://github.com/Loyalsoldier/geoip/releases/latest/download/Country.mmdb).
-
-## Demo
-
-Example stdout:
-
-```bash
-2024/02/08 20:51:10 INFO Started all scanning threads time=2024-02-08T20:51:10.017+08:00
-2024/02/08 20:51:10 INFO Connected to target feasible=true host=107.172.103.9 tls=1.3 alpn=h2 domain=rocky-linux.tk issuer="Let's Encrypt"
-2024/02/08 20:51:10 INFO Connected to target feasible=true host=107.172.103.11 tls=1.3 alpn=h2 domain=rn.allinai.dev issuer="Let's Encrypt"
-2024/02/08 20:51:13 INFO Connected to target feasible=true host=107.172.103.16 tls=1.3 alpn=h2 domain=san.hiddify01.foshou.vip issuer="Let's Encrypt"
-2024/02/08 20:51:13 INFO Connected to target feasible=true host=107.172.103.19 tls=1.3 alpn=h2 domain=mgzx19.cnscholar.top issuer="Let's Encrypt"
-2024/02/08 20:51:13 INFO Connected to target feasible=true host=107.172.103.22 tls=1.3 alpn=h2 domain=hy2.znull.top issuer=ZeroSSL
-2024/02/08 20:51:21 INFO Connected to target feasible=true host=107.172.103.37 tls=1.3 alpn=h2 domain=c1.webgenbd.com issuer="Let's Encrypt"
-2024/02/08 20:51:23 INFO Connected to target feasible=true host=107.172.103.46 tls=1.3 alpn=h2 domain=racknerd.myideal.xyz issuer="Let's Encrypt"
-2024/02/08 20:51:38 INFO Scanning completed time=2024-02-08T20:51:38.988+08:00 elapsed=28.97043s
+docker run --rm realitlscanner scan -addr 1.1.1.0/24 -detect -format json
+docker run --rm realitlscanner check example.com
 ```
 
-Example output file:
+## GeoIP
+
+Place a MaxMind GeoLite2/GeoIP2 Country Database named `Country.mmdb` in the working directory. Download from [here](https://github.com/Loyalsoldier/geoip/releases/latest/download/Country.mmdb).
+
+## Data Files
+
+Detection features use the following data files:
+
+| File | Purpose | Source |
+|------|---------|--------|
+| `Country.mmdb` | GeoIP lookup | [Loyalsoldier/geoip](https://github.com/Loyalsoldier/geoip/releases) |
+| `gfwlist.conf` | GFW block detection | [Loyalsoldier/clash-rules](https://github.com/Loyalsoldier/clash-rules) |
+| `cdn_keywords.txt` | CDN detection | Built-in (embedded) |
+| `hot_websites.txt` | Hot website detection | Built-in (embedded) |
+
+CDN keywords and hot websites are embedded in the binary. GeoIP and GFW list are downloaded on first use when `--detect` is enabled.
+
+## Output Formats
+
+### CSV (default)
 
 ```csv
 IP,ORIGIN,CERT_DOMAIN,CERT_ISSUER,GEO_CODE
 202.70.64.2,ntc.net.np,*.ntc.net.np,"GlobalSign nv-sa",NP
-196.200.160.70,mirror.marwan.ma,mirror.marwan.ma,"Let's Encrypt",MA
 103.194.167.213,mirror.i3d.net,*.i3d.net,"Sectigo Limited",JP
-194.127.172.131,nl.mirrors.clouvider.net,nl.mirrors.clouvider.net,"Let's Encrypt",NL
-202.36.220.86,mirror.2degrees.nz,mirror.2degrees.nz,"Let's Encrypt",NZ
-202.36.220.86,ubuntu.mirrors.theom.nz,mirror.2degrees.nz,"Let's Encrypt",NZ
-158.37.28.65,ubuntu.hi.no,alma.hi.no,"Let's Encrypt",NO
-193.136.164.6,ftp.rnl.tecnico.ulisboa.pt,ftp.rnl.ist.utl.pt,"Let's Encrypt",PT
-75.2.60.5,cesium.di.uminho.pt,cesium.di.uminho.pt,"Let's Encrypt",US
-195.14.50.21,mirror.corbina.net,ftp.corbina.net,"Let's Encrypt",RU
 ```
 
+### CSV Extended (`-format csv-extended`)
+
+```csv
+IP,ORIGIN,CERT_DOMAIN,CERT_ISSUER,GEO_CODE,CDN_LEVEL,GFW_BLOCKED,SCORE
+1.2.3.4,example.com,example.com,"Let's Encrypt",US,none,false,85
+```
+
+### JSON (`-format json`)
+
+```json
+{
+  "metadata": { "version": "2.0", "timestamp": "..." },
+  "results": [
+    {
+      "ip": "1.2.3.4",
+      "origin": "example.com",
+      "tls": { "version": "0x0304", "alpn": "h2", "cert_domain": "...", "cert_issuer": "..." },
+      "geo_code": "US",
+      "cdn": { "level": "none" },
+      "gfw": { "blocked": false },
+      "feasible": true
+    }
+  ],
+  "summary": { "total_scanned": 100, "feasible_count": 5, "detection_rate": "5%" }
+}
+```
+
+### JSONL (`-format jsonl`)
+
+One JSON object per line, suitable for streaming and piping.
+
+## Project Structure
+
+```
+cmd/realitlscanner/     CLI entry point (subcommand routing)
+internal/
+  types/                Shared types (Host, ScanResult)
+  scanner/              TLS scanning logic
+  detector/             Detector interface + implementations
+  pipeline/             Channel-based scan→detect→output orchestration
+  output/               Multi-format output (CSV, JSON, JSONL, progress)
+  data/                 Data file management (embed + download)
+  geo/                  GeoIP lookup
+```
+
+## Testing
+
+```bash
+make test
+# or
+go test -race ./...
+```
