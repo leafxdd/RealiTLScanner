@@ -101,9 +101,9 @@ func (m *DataManager) EnsureReady(ctx context.Context, names ...string) error {
 		if f.DownloadURL == "" {
 			continue
 		}
+		slog.Info("Downloading data file...", "name", name, "url", f.DownloadURL)
 		if err := m.download(ctx, f); err != nil {
-			slog.Warn("Failed to download data file, detector may be unavailable",
-				"name", name, "err", err)
+			return fmt.Errorf("failed to download %s: %w", name, err)
 		}
 	}
 	return nil

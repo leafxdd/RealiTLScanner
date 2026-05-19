@@ -66,7 +66,12 @@ Scan domains and evaluate feasibility with formatted table output:
 
 # Custom threads and timeout:
 ./RealiTLScanner scan -addr 1.2.3.0/24 -thread 16 -timeout 10
+
+# Continue even if data file download fails:
+./RealiTLScanner scan -addr 1.2.3.0/24 -skip-download
 ```
+
+Data files (gfwlist, Country.mmdb) are automatically downloaded on first `scan` run. If download fails, the program stops by default. Use `-skip-download` to continue with limited detection.
 
 #### Output Example
 

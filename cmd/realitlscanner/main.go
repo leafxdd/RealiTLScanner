@@ -133,16 +133,17 @@ func runScan(args []string) {
 
 	fs := flag.NewFlagSet("scan", flag.ExitOnError)
 	var (
-		addr       string
-		in         string
-		csvFile    string
-		port       int
-		thread     int
-		out        string
-		timeout    int
-		verbose    bool
-		enableIPv6 bool
-		url        string
+		addr         string
+		in           string
+		csvFile      string
+		port         int
+		thread       int
+		out          string
+		timeout      int
+		verbose      bool
+		enableIPv6   bool
+		url          string
+		skipDownload bool
 	)
 
 	fs.StringVar(&addr, "addr", "", "IP, CIDR or domain to scan")
@@ -155,6 +156,7 @@ func runScan(args []string) {
 	fs.BoolVar(&verbose, "v", false, "Verbose output")
 	fs.BoolVar(&enableIPv6, "46", false, "Enable IPv6")
 	fs.StringVar(&url, "url", "", "Crawl domain list from URL")
+	fs.BoolVar(&skipDownload, "skip-download", false, "Continue even if data file download fails")
 	_ = fs.Parse(args)
 
 	setupLogging(verbose)
@@ -170,13 +172,21 @@ func runScan(args []string) {
 		return
 	}
 
+	// Download data files before initializing detectors
+	dm := data.NewDataManager(".")
+	ctx := context.Background()
+	if err := dm.EnsureReady(ctx, "cdn_keywords", "hot_websites", "gfwlist", "geoip"); err != nil {
+		if skipDownload {
+			slog.Warn("Data file download failed, continuing with limited detection", "err", err)
+		} else {
+			slog.Error("Data file download failed (use -skip-download to continue anyway)", "err", err)
+			return
+		}
+	}
+
 	geoReader := geo.NewGeo()
 	defer geoReader.Close()
 
-	// Build detectors (always enabled in scan mode)
-	dm := data.NewDataManager(".")
-	ctx := context.Background()
-	_ = dm.EnsureReady(ctx, "cdn_keywords", "hot_websites", "gfwlist")
 	dets := buildDetectors(dm, geoReader, "all")
 	runner := detector.NewRunner(dets, thread)
 	slog.Info("Detectors enabled", "available", runner.AvailableDetectors())
