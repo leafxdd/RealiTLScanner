@@ -1,0 +1,15 @@
+google.com,search
+facebook.com,social
+youtube.com,video
+twitter.com,social
+amazon.com,ecommerce
+microsoft.com,tech
+apple.com,tech
+github.com,dev
+netflix.com,streaming
+reddit.com,social
+instagram.com,social
+linkedin.com,social
+wikipedia.org,reference
+yahoo.com,portal
+tiktok.com,social
