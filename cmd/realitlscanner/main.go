@@ -224,9 +224,6 @@ func runScan(args []string) {
 		EnableIPv6: enableIPv6,
 	}
 
-	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt)
-	defer cancel()
-
 	var hostChan <-chan types.Host
 	var domainCount int
 
@@ -258,9 +255,11 @@ func runScan(args []string) {
 		if rawHosts == nil {
 			return
 		}
-		fmt.Fprintf(os.Stderr, "[%s] 开始扫描IP段...\n", time.Now().Format("15:04:05"))
+		fmt.Fprintf(os.Stderr, "[%s] 开始扫描IP段... (Ctrl+C 中断扫描并开始检测)\n", time.Now().Format("15:04:05"))
 
-		// Scan phase: collect all results with TLS info
+		// Scan phase uses its own context so Ctrl+C stops scanning but allows detection to proceed
+		scanCtx, scanCancel := signal.NotifyContext(ctx, os.Interrupt)
+
 		scanPipeCfg := pipeline.Config{
 			ScanWorkers:   thread,
 			DetectWorkers: thread,
@@ -269,29 +268,50 @@ func runScan(args []string) {
 			PassAll:       true,
 		}
 		sp := pipeline.New(scanPipeCfg, geoReader, nil)
-		scanCh, err := sp.Run(ctx, rawHosts)
+		scanCh, err := sp.Run(scanCtx, rawHosts)
 		if err != nil {
+			scanCancel()
 			slog.Error("Scan pipeline failed", "err", err)
 			return
 		}
 		var scanResults []*types.ScanResult
 		seen := make(map[string]bool)
-		for result := range scanCh {
-			if result.TLS != nil && result.TLS.CertDomain != "" {
-				d := result.TLS.CertDomain
-				if !seen[d] && scanner.IsValidDomain(d) {
-					seen[d] = true
-					scanResults = append(scanResults, result)
+		interrupted := false
+	scanLoop:
+		for {
+			select {
+			case <-scanCtx.Done():
+				interrupted = true
+				break scanLoop
+			case result, ok := <-scanCh:
+				if !ok {
+					break scanLoop
+				}
+				if result.TLS != nil && result.TLS.CertDomain != "" {
+					d := result.TLS.CertDomain
+					if !seen[d] && scanner.IsValidDomain(d) {
+						seen[d] = true
+						scanResults = append(scanResults, result)
+					}
 				}
 			}
 		}
+		scanCancel()
+
 		if len(scanResults) == 0 {
 			fmt.Fprintf(os.Stderr, "[%s] 未发现可用域名\n", time.Now().Format("15:04:05"))
 			return
 		}
-		fmt.Fprintf(os.Stderr, "[%s] 扫描完成, 发现 %d 个域名, 开始检测...\n", time.Now().Format("15:04:05"), len(scanResults))
+		if interrupted {
+			fmt.Fprintf(os.Stderr, "\n[%s] 扫描中断, 使用已收集的 %d 个域名继续检测...\n", time.Now().Format("15:04:05"), len(scanResults))
+		} else {
+			fmt.Fprintf(os.Stderr, "[%s] 扫描完成, 发现 %d 个域名, 开始检测...\n", time.Now().Format("15:04:05"), len(scanResults))
+		}
 
-		// Detection phase: run detectors directly on scan results
+		// Detection phase: fresh context so second Ctrl+C aborts detection
+		detectCtx, detectCancel := signal.NotifyContext(context.Background(), os.Interrupt)
+		defer detectCancel()
+
 		table.SetTotal(len(scanResults))
 		fmt.Fprintf(os.Stderr, "[%s] 开始检测...\n", time.Now().Format("15:04:05"))
 		table.WriteHeader()
@@ -303,7 +323,7 @@ func runScan(args []string) {
 		close(resultCh)
 
 		t := time.Now()
-		detectedCh := runner.Run(ctx, resultCh)
+		detectedCh := runner.Run(detectCtx, resultCh)
 		suitable := 0
 		unsuitable := 0
 		for result := range detectedCh {
@@ -322,6 +342,9 @@ func runScan(args []string) {
 	table.SetTotal(domainCount)
 	fmt.Fprintf(os.Stderr, "[%s] 开始检测...\n", time.Now().Format("15:04:05"))
 
+	pipeCtx, pipeCancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer pipeCancel()
+
 	pipeCfg := pipeline.Config{
 		ScanWorkers:   thread,
 		DetectWorkers: thread,
@@ -330,7 +353,7 @@ func runScan(args []string) {
 		PassAll:       true,
 	}
 	p := pipeline.New(pipeCfg, geoReader, runner)
-	outCh, err := p.Run(ctx, hostChan)
+	outCh, err := p.Run(pipeCtx, hostChan)
 	if err != nil {
 		slog.Error("Detection pipeline failed", "err", err)
 		return

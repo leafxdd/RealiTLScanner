@@ -8,12 +8,12 @@ A high-performance TLS certificate scanner with integrated Reality protocol doma
 
 - TLS certificate scanning (IP, CIDR, domain)
 - Concurrent scanning with configurable thread count
-- Infinity mode (auto-expand from single IP/domain)
 - GeoIP location lookup
 - **Domain feasibility detection**: CDN, GFW, TLS validation, hot website, redirect, HTTP status
 - **Star rating** (0-5): handshake time, CDN, popularity, certificate validity
 - **Formatted table output** with color coding
 - **Real-time progress reporting**
+- **Graceful Ctrl+C**: in scan mode, interrupt scanning phase to immediately proceed to detection with collected domains
 - Docker support
 
 ## Building
@@ -181,3 +181,8 @@ make test
 # or
 go test -race ./...
 ```
+
+## Acknowledgements
+
+- [XTLS/RealiTLScanner](https://github.com/XTLS/RealiTLScanner) - Original project
+- [V2RaySSR/RealityChecker](https://github.com/V2RaySSR/RealityChecker) - Domain detection logic reference
