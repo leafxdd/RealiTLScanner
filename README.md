@@ -1,6 +1,6 @@
 # RealiTLScanner
 
-A high-performance TLS certificate scanner with integrated Reality protocol domain evaluation. Scans IP/CIDR/domain targets for TLS certificates and optionally evaluates domain feasibility through multiple detectors (CDN, GFW, redirect, hot website, etc.).
+A high-performance TLS certificate scanner with integrated Reality protocol domain evaluation. Scans IP/CIDR/domain targets for TLS certificates and evaluates domain feasibility through multiple detectors (CDN, GFW, redirect, hot website, etc.).
 
 ## Features
 
@@ -8,10 +8,10 @@ A high-performance TLS certificate scanner with integrated Reality protocol doma
 - Concurrent scanning with configurable thread count
 - Infinity mode (auto-expand from single IP/domain)
 - GeoIP location lookup
-- **Integrated detectors**: CDN detection, GFW block detection, TLS validation, hot website identification, redirect detection
-- **Multiple output formats**: CSV, JSON, JSONL
+- **Domain feasibility detection**: CDN, GFW, TLS validation, hot website, redirect, HTTP status
+- **Star rating** (0-5): handshake time, CDN, popularity, certificate validity
+- **Formatted table output** with color coding
 - **Real-time progress reporting**
-- **Subcommand CLI**: `scan`, `check`, `version`
 - Docker support
 
 ## Building
@@ -26,11 +26,13 @@ go build -o RealiTLScanner ./cmd/realitlscanner
 
 ## Usage
 
-### Basic Scanning (backward compatible)
+### Basic Scanning
+
+Scan IP range and output domains to CSV file:
 
 ```bash
-# Scan a specific IP, IP CIDR or domain (infinity mode auto-enabled for single IP/domain):
-./RealiTLScanner -addr 1.2.3.4
+# Scan a specific IP, IP CIDR or domain:
+./RealiTLScanner -addr 1.2.3.0/24
 
 # Scan from file:
 ./RealiTLScanner -in targets.txt
@@ -41,46 +43,73 @@ go build -o RealiTLScanner ./cmd/realitlscanner
 # Custom port, threads, timeout:
 ./RealiTLScanner -addr 107.172.1.0/24 -port 443 -thread 10 -timeout 5
 
-# Verbose output:
-./RealiTLScanner -addr 1.2.3.0/24 -v
-
-# Save to file:
+# Save to file (default: out.csv):
 ./RealiTLScanner -addr 1.2.3.0/24 -out results.csv
 ```
 
-### Scan with Detection
+### Scan with Detection (`scan`)
+
+Scan domains and evaluate feasibility with formatted table output:
 
 ```bash
-# Enable all detectors (CDN, GFW, TLS check, hot website, redirect, etc.):
-./RealiTLScanner scan -addr 1.2.3.0/24 -detect
+# Scan IP range, detect and display results:
+./RealiTLScanner scan -addr 1.2.3.0/24
 
-# JSON output:
-./RealiTLScanner scan -addr 1.2.3.0/24 -detect -format json
+# Read domains from a previously generated CSV file:
+./RealiTLScanner scan -csv results.csv
 
-# JSONL output (streaming, one result per line):
-./RealiTLScanner scan -addr 1.2.3.0/24 -detect -format jsonl
+# Directly specify domains:
+./RealiTLScanner scan apple.com www.tesla.com example.com
 
-# Extended CSV (includes detection columns):
-./RealiTLScanner scan -addr 1.2.3.0/24 -detect -format csv-extended
+# Also save results to file:
+./RealiTLScanner scan -csv results.csv -out report.txt
 
-# Batch mode (scan all first, then detect):
-./RealiTLScanner scan -addr 1.2.3.0/24 -detect -batch
-
-# Select specific detectors:
-./RealiTLScanner scan -addr 1.2.3.0/24 -detect -detectors cdn,gfw,tls_check
-
-# Specify data files directory:
-./RealiTLScanner scan -addr 1.2.3.0/24 -detect -data-dir ./data
+# Custom threads and timeout:
+./RealiTLScanner scan -addr 1.2.3.0/24 -thread 16 -timeout 10
 ```
+
+#### Output Example
+
+```
+------------------------------------------------------------------------------------------------
+最终域名                           基础条件     握手时间       证书时间       CDN      热门     推荐     页面状态
+------------------------------------------------------------------------------------------------
+yz.iosjy.top                   ✓          341ms        69天         无       -      ****     200
+blog.bingserve.xyz             ✓          447ms        83天         无       -      ****     200
+yingyaozw.com                  ✓          439ms        246天        无       -      ****     200
+code.memoncler.com             ✓          783ms        5天          无       -      ***      -
+o03.cc                         ✗          1624ms       88天         无       -      ***      405
+
+------------------------------------------------------------------------------------------------
+检测完成: 31 个域名, 29 个适合 (93.5%), 耗时 12.9s
+```
+
+| Column | Description |
+|--------|-------------|
+| 最终域名 | Domain from TLS certificate |
+| 基础条件 | TLS 1.3 + H2 + valid cert + issuer (✓/✗) |
+| 握手时间 | TLS handshake latency (green ≤200ms, yellow ≤500ms, red >500ms) |
+| 证书时间 | Days until certificate expiry (green ≥60, yellow ≥30, red <30) |
+| CDN | CDN detection level (无/low/medium/high) |
+| 热门 | Popular website flag (✓ = hot, - = not) |
+| 推荐 | Star rating 0-5 based on overall quality |
+| 页面状态 | HTTP status code |
+
+#### Star Rating Criteria
+
+| Criterion | Stars |
+|-----------|-------|
+| Base conditions pass (TLS 1.3 + H2 + SNI match) | +1 |
+| Handshake time ≤ 200ms | +1 |
+| No CDN detected | +1 |
+| Not a popular/hot website | +1 |
+| Certificate valid ≥ 60 days | +1 |
 
 ### Single Domain Check
 
 ```bash
-# Full check on a single domain (scan + all detectors + formatted report):
+# Full check on a single domain:
 ./RealiTLScanner check example.com
-
-# With custom port:
-./RealiTLScanner check example.com -port 8443
 ```
 
 ### Version
@@ -96,9 +125,9 @@ go build -o RealiTLScanner ./cmd/realitlscanner
 docker build -t realitlscanner .
 
 # Run:
-docker run --rm realitlscanner -addr 1.1.1.1
-docker run --rm realitlscanner scan -addr 1.1.1.0/24 -detect -format json
-docker run --rm realitlscanner check example.com
+docker run --rm realitlscanner -addr 1.1.1.0/24
+docker run --rm realitlscanner scan -addr 1.1.1.0/24
+docker run --rm realitlscanner scan apple.com www.tesla.com
 ```
 
 ## GeoIP
@@ -116,48 +145,7 @@ Detection features use the following data files:
 | `cdn_keywords.txt` | CDN detection | Built-in (embedded) |
 | `hot_websites.txt` | Hot website detection | Built-in (embedded) |
 
-CDN keywords and hot websites are embedded in the binary. GeoIP and GFW list are downloaded on first use when `--detect` is enabled.
-
-## Output Formats
-
-### CSV (default)
-
-```csv
-IP,ORIGIN,CERT_DOMAIN,CERT_ISSUER,GEO_CODE
-202.70.64.2,ntc.net.np,*.ntc.net.np,"GlobalSign nv-sa",NP
-103.194.167.213,mirror.i3d.net,*.i3d.net,"Sectigo Limited",JP
-```
-
-### CSV Extended (`-format csv-extended`)
-
-```csv
-IP,ORIGIN,CERT_DOMAIN,CERT_ISSUER,GEO_CODE,CDN_LEVEL,GFW_BLOCKED,SCORE
-1.2.3.4,example.com,example.com,"Let's Encrypt",US,none,false,85
-```
-
-### JSON (`-format json`)
-
-```json
-{
-  "metadata": { "version": "2.0", "timestamp": "..." },
-  "results": [
-    {
-      "ip": "1.2.3.4",
-      "origin": "example.com",
-      "tls": { "version": "0x0304", "alpn": "h2", "cert_domain": "...", "cert_issuer": "..." },
-      "geo_code": "US",
-      "cdn": { "level": "none" },
-      "gfw": { "blocked": false },
-      "feasible": true
-    }
-  ],
-  "summary": { "total_scanned": 100, "feasible_count": 5, "detection_rate": "5%" }
-}
-```
-
-### JSONL (`-format jsonl`)
-
-One JSON object per line, suitable for streaming and piping.
+CDN keywords and hot websites are embedded in the binary. GeoIP and GFW list are downloaded on first use.
 
 ## Project Structure
 
@@ -165,10 +153,10 @@ One JSON object per line, suitable for streaming and piping.
 cmd/realitlscanner/     CLI entry point (subcommand routing)
 internal/
   types/                Shared types (Host, ScanResult)
-  scanner/              TLS scanning logic
-  detector/             Detector interface + implementations
+  scanner/              TLS scanning + CSV domain parser
+  detector/             Detector interface + implementations + scorer
   pipeline/             Channel-based scan→detect→output orchestration
-  output/               Multi-format output (CSV, JSON, JSONL, progress)
+  output/               Output writers (CSV, JSON, table) + progress
   data/                 Data file management (embed + download)
   geo/                  GeoIP lookup
 ```

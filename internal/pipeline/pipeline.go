@@ -23,7 +23,8 @@ type Config struct {
 	DetectWorkers int
 	Mode          Mode
 	ScanConfig    scanner.ScanConfig
-	OnScan        func() // called for every scan attempt
+	OnScan        func()
+	PassAll       bool // send all TLS-connected results, not just feasible
 }
 
 type Pipeline struct {
@@ -62,7 +63,7 @@ func (p *Pipeline) Run(ctx context.Context, hosts <-chan types.Host) (<-chan *ty
 				if p.cfg.OnScan != nil {
 					p.cfg.OnScan()
 				}
-				if result.Feasible {
+				if result.Feasible || (p.cfg.PassAll && result.TLS != nil) {
 					scanResultCh <- result
 				}
 			}

@@ -63,7 +63,9 @@ func ScanTLS(ctx context.Context, host types.Host, cfg ScanConfig, geoReader *ge
 	}
 
 	c := tls.Client(conn, tlsCfg)
+	hsStart := time.Now()
 	err = c.Handshake()
+	hsTime := time.Since(hsStart)
 	if err != nil {
 		slog.Debug("TLS handshake failed", "target", hostPort)
 		result.Error = "handshake failed"
@@ -73,12 +75,15 @@ func ScanTLS(ctx context.Context, host types.Host, cfg ScanConfig, geoReader *ge
 	state := c.ConnectionState()
 	domain := state.PeerCertificates[0].Subject.CommonName
 	issuers := strings.Join(state.PeerCertificates[0].Issuer.Organization, " | ")
+	certExpiry := state.PeerCertificates[0].NotAfter
 
 	result.TLS = &types.TLSInfo{
-		Version:    state.Version,
-		ALPN:       state.NegotiatedProtocol,
-		CertDomain: domain,
-		CertIssuer: issuers,
+		Version:       state.Version,
+		ALPN:          state.NegotiatedProtocol,
+		CertDomain:    domain,
+		CertIssuer:    issuers,
+		HandshakeTime: hsTime,
+		CertExpiry:    certExpiry,
 	}
 	result.GeoCode = geoReader.GetGeo(host.IP)
 

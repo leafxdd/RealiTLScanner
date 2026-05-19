@@ -6,10 +6,12 @@ import (
 )
 
 type TLSInfo struct {
-	Version    uint16 `json:"version"`
-	ALPN       string `json:"alpn"`
-	CertDomain string `json:"cert_domain"`
-	CertIssuer string `json:"cert_issuer"`
+	Version       uint16        `json:"version"`
+	ALPN          string        `json:"alpn"`
+	CertDomain    string        `json:"cert_domain"`
+	CertIssuer    string        `json:"cert_issuer"`
+	HandshakeTime time.Duration `json:"handshake_time"`
+	CertExpiry    time.Time     `json:"cert_expiry,omitempty"`
 }
 
 type CDNResult struct {
