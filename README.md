@@ -1,5 +1,7 @@
 # RealiTLScanner
 
+[中文文档](README_zh.md)
+
 A high-performance TLS certificate scanner with integrated Reality protocol domain evaluation. Scans IP/CIDR/domain targets for TLS certificates and evaluates domain feasibility through multiple detectors (CDN, GFW, redirect, hot website, etc.).
 
 ## Features
