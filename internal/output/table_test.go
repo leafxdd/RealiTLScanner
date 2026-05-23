@@ -46,6 +46,38 @@ func TestTableHeaderSeparatorEnclosesHeader(t *testing.T) {
 	}
 }
 
+func TestRenderRow_AlignsRegardlessOfANSI(t *testing.T) {
+	// Mixed row: every cell coloured. The previous byte-based padding
+	// happened to look right here because each cell carried ~9 bytes of
+	// ANSI escapes that consumed the "extra" padding.
+	colored := renderRow(
+		"example.com",
+		"\x1b[31m✗\x1b[0m",   // baseStr (red ✗)
+		"\x1b[32m8ms\x1b[0m", // hsStr
+		"\x1b[33m101天\x1b[0m",
+		"\x1b[32m无\x1b[0m",
+		"\x1b[31m✓\x1b[0m", // hot=true
+		"\x1b[33m***\x1b[0m",
+		"\x1b[32m200\x1b[0m", // status colored
+	)
+	// Plain row: hot and status are bare "-" (no ANSI). The old code
+	// over-padded these cells by ~9 cells, pushing later columns right.
+	plain := renderRow("example.com", "✗", "8ms", "101天", "无", "-", "***", "-")
+
+	visibleColored := stringVisualWidth(ansiRE.ReplaceAllString(colored, ""))
+	visiblePlain := stringVisualWidth(plain)
+	if visibleColored != visiblePlain {
+		t.Errorf("rows misaligned: colored visible width %d, plain %d\n  colored=%q\n  plain  =%q",
+			visibleColored, visiblePlain, colored, plain)
+	}
+	// Both rows must match the header / separator width — no over- or
+	// under-shoot regardless of colour mix.
+	if visiblePlain != tableSepLen {
+		t.Errorf("plain row visual width %d != tableSepLen %d (row=%q)",
+			visiblePlain, tableSepLen, plain)
+	}
+}
+
 func TestWriteHeader_SeparatorMatchesHeaderWidth(t *testing.T) {
 	var term bytes.Buffer
 	tw := &TableWriter{termW: &term, colorEnabled: false}

@@ -65,15 +65,24 @@ func (tw *TableWriter) SetTotal(n int) {
 	tw.total = n
 }
 
-// tableHeader is the single source of truth for column layout. The dash
-// separator below is sized by its actual terminal cell width — Chinese
-// labels take 2 cells per glyph, so a naive rune count under-sizes the
-// separator and lets the last two columns leak past it.
-var (
-	tableHeader = fmt.Sprintf("%-30s %-8s %-10s %-10s %-8s %-6s %-6s %-8s",
-		"最终域名", "基础条件", "握手时间", "证书时间", "CDN", "热门", "推荐", "页面状态")
-	tableSepLen = stringVisualWidth(tableHeader)
+// Column visual widths (terminal cells, CJK = 2). These match the natural
+// rendering of the CJK header labels under the previous %-Ns layout, so the
+// visual look is preserved while data rows are padded by cell width instead
+// of byte count. Padding by bytes (the old approach) over-counted ANSI escape
+// sequences, so cells without colour (e.g. hot="-") overshot their column
+// width and pushed subsequent columns out of alignment.
+const (
+	colDomainW = 34
+	colBasicW  = 12
+	colHsW     = 14
+	colCertW   = 14
+	colCDNW    = 8
+	colHotW    = 8
+	colRecW    = 8
+	colStatusW = 12
 )
+
+var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
 // stringVisualWidth returns the terminal cell width of s, counting CJK and
 // fullwidth characters as 2 cells. Sufficient for our header — we don't pull
@@ -98,7 +107,42 @@ func stringVisualWidth(s string) int {
 	return w
 }
 
-var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+// padVisualRight pads s with trailing spaces until its visual cell width
+// (excluding ANSI SGR escapes) reaches width. Returns s unchanged when
+// already at or above width.
+func padVisualRight(s string, width int) string {
+	visible := ansiRE.ReplaceAllString(s, "")
+	have := stringVisualWidth(visible)
+	if have >= width {
+		return s
+	}
+	return s + strings.Repeat(" ", width-have)
+}
+
+// renderRow joins eight pre-built cells with single-space delimiters,
+// padding each to its column's visual cell width. ANSI escapes inside
+// cells are preserved but ignored for width.
+func renderRow(domain, basic, hs, cert, cdn, hot, rec, status string) string {
+	return padVisualRight(domain, colDomainW) + " " +
+		padVisualRight(basic, colBasicW) + " " +
+		padVisualRight(hs, colHsW) + " " +
+		padVisualRight(cert, colCertW) + " " +
+		padVisualRight(cdn, colCDNW) + " " +
+		padVisualRight(hot, colHotW) + " " +
+		padVisualRight(rec, colRecW) + " " +
+		padVisualRight(status, colStatusW)
+}
+
+// tableHeader is the single source of truth for column layout. The dash
+// separator below is sized by its actual terminal cell width — Chinese
+// labels take 2 cells per glyph, so a naive rune count under-sizes the
+// separator and lets the last two columns leak past it.
+var (
+	tableHeader = renderRow(
+		"最终域名", "基础条件", "握手时间", "证书时间",
+		"CDN", "热门", "推荐", "页面状态")
+	tableSepLen = stringVisualWidth(tableHeader)
+)
 
 // writeTerm writes s to the terminal stream, stripping ANSI colour escapes
 // when the destination is not a TTY.
@@ -186,13 +230,11 @@ func (tw *TableWriter) WriteResult(result *types.ScanResult) {
 		statusPlain = "-"
 	}
 
-	termLine := fmt.Sprintf("%-30s %-18s %-20s %-20s %-18s %-16s %-16s %-18s",
-		domain, baseStr, hsStr, certStr, cdnStr, hotStr, starsStr, statusStr)
+	termLine := renderRow(domain, baseStr, hsStr, certStr, cdnStr, hotStr, starsStr, statusStr)
 	tw.writeTerm(termLine + "\n")
 
 	if tw.fileW != nil {
-		fileLine := fmt.Sprintf("%-30s %-8s %-10s %-10s %-8s %-6s %-6s %-8s",
-			domain, basePlain, hsPlain, certPlain, cdnPlain, hotPlain, stars, statusPlain)
+		fileLine := renderRow(domain, basePlain, hsPlain, certPlain, cdnPlain, hotPlain, stars, statusPlain)
 		fmt.Fprintln(tw.fileW, fileLine)
 	}
 }
