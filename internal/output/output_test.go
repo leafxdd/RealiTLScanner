@@ -2,6 +2,7 @@ package output
 
 import (
 	"bytes"
+	"encoding/csv"
 	"encoding/json"
 	"net"
 	"strings"
@@ -55,6 +56,45 @@ func TestCSVWriter_Escape(t *testing.T) {
 	line := strings.TrimSpace(buf.String())
 	if !strings.Contains(line, "\"Cloudflare, Inc.\"") {
 		t.Errorf("expected escaped field, got: %s", line)
+	}
+}
+
+func TestCSVWriter_RoundTrip(t *testing.T) {
+	var buf bytes.Buffer
+	w := NewCSVWriter(&buf, Options{})
+	if err := w.WriteHeader(); err != nil {
+		t.Fatal(err)
+	}
+
+	r := testResult()
+	r.TLS.CertDomain = "has,comma.example"
+	r.TLS.CertIssuer = `has"quote, Inc.`
+	r.GeoCode = "line\nbreak"
+	if err := w.WriteResult(r); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	cr := csv.NewReader(&buf)
+	rows, err := cr.ReadAll()
+	if err != nil {
+		t.Fatalf("round-trip parse failed: %s", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 rows (header + result), got %d", len(rows))
+	}
+
+	got := rows[1]
+	want := []string{"1.2.3.4", "example.com", "has,comma.example", `has"quote, Inc.`, "line\nbreak"}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d fields, got %d (%v)", len(want), len(got), got)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("field[%d]: got %q, want %q", i, got[i], w)
+		}
 	}
 }
 

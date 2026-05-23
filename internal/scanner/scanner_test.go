@@ -11,6 +11,8 @@ import (
 	"encoding/pem"
 	"math/big"
 	"net"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -118,57 +120,6 @@ func TestScanTLS_LocalServer(t *testing.T) {
 	}
 }
 
-func TestResultToCSV(t *testing.T) {
-	r := &types.ScanResult{
-		Host:    types.Host{Origin: "example.com"},
-		IP:      net.ParseIP("1.2.3.4"),
-		GeoCode: "US",
-		TLS: &types.TLSInfo{
-			CertDomain: "example.com",
-			CertIssuer: "Let's Encrypt",
-		},
-	}
-	csv := ResultToCSV(r)
-	expected := "1.2.3.4,example.com,example.com,Let's Encrypt,US\n"
-	if csv != expected {
-		t.Errorf("expected %q, got %q", expected, csv)
-	}
-}
-
-func TestResultToCSV_WithComma(t *testing.T) {
-	r := &types.ScanResult{
-		Host:    types.Host{Origin: "cdn.example.com"},
-		IP:      net.ParseIP("1.2.3.4"),
-		GeoCode: "US",
-		TLS: &types.TLSInfo{
-			CertDomain: "Cloudflare, Inc.",
-			CertIssuer: "DigiCert, Inc.",
-		},
-	}
-	csv := ResultToCSV(r)
-	expected := "1.2.3.4,cdn.example.com,\"Cloudflare, Inc.\",\"DigiCert, Inc.\",US\n"
-	if csv != expected {
-		t.Errorf("expected %q, got %q", expected, csv)
-	}
-}
-
-func TestCsvEscape(t *testing.T) {
-	tests := []struct {
-		input, want string
-	}{
-		{"simple", "simple"},
-		{"has,comma", "\"has,comma\""},
-		{"has\"quote", "\"has\"\"quote\""},
-		{"has\nnewline", "\"has\nnewline\""},
-	}
-	for _, tt := range tests {
-		got := CsvEscape(tt.input)
-		if got != tt.want {
-			t.Errorf("CsvEscape(%q) = %q, want %q", tt.input, got, tt.want)
-		}
-	}
-}
-
 func TestValidateDomainName(t *testing.T) {
 	tests := []struct {
 		domain string
@@ -187,8 +138,46 @@ func TestValidateDomainName(t *testing.T) {
 	}
 }
 
+func TestReadCSVDomains_HandlesQuotedFields(t *testing.T) {
+	// Earlier strings.Split parser would mis-count columns when an upstream
+	// field (e.g. CERT_ISSUER "Cloudflare, Inc.") contained a comma, shifting
+	// every subsequent column. encoding/csv must keep quoted fields intact.
+	csvContent := `IP,ORIGIN,CERT_DOMAIN,CERT_ISSUER,GEO_CODE
+1.2.3.4,foo.example,foo.example,"Cloudflare, Inc.",US
+5.6.7.8,bar.example,bar.example,DigiCert,DE
+9.9.9.9,baz.example,baz.example,"Let""s Encrypt",JP
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "input.csv")
+	if err := os.WriteFile(path, []byte(csvContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ch, count, err := ReadCSVDomains(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var got []string
+	for h := range ch {
+		got = append(got, h.Origin)
+	}
+
+	want := []string{"foo.example", "bar.example", "baz.example"}
+	if count != len(want) {
+		t.Errorf("expected %d domains, got %d", len(want), count)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d hosts, got %d (%v)", len(want), len(got), got)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("domain[%d]: got %q, want %q", i, got[i], w)
+		}
+	}
+}
+
 func TestIterateAddrInfinite_SingleHostByDefault(t *testing.T) {
-	// Without infinite=true, a single IP should yield exactly one host then close.
 	ch := IterateAddrInfinite("127.0.0.1", false, false)
 
 	count := 0

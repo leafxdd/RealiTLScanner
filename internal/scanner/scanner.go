@@ -107,16 +107,3 @@ func ScanTLS(ctx context.Context, host types.Host, cfg ScanConfig, geoReader *ge
 
 	return result
 }
-
-func ResultToCSV(r *types.ScanResult) string {
-	if r.TLS == nil {
-		return ""
-	}
-	return strings.Join([]string{
-		r.IP.String(),
-		r.Host.Origin,
-		CsvEscape(r.TLS.CertDomain),
-		CsvEscape(r.TLS.CertIssuer),
-		r.GeoCode,
-	}, ",") + "\n"
-}

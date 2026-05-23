@@ -184,13 +184,6 @@ func RemoveDuplicateStr(strSlice []string) []string {
 	return list
 }
 
-func CsvEscape(field string) string {
-	if strings.ContainsAny(field, ",\"\n\r") {
-		return "\"" + strings.ReplaceAll(field, "\"", "\"\"") + "\""
-	}
-	return field
-}
-
 func NextIP(ip net.IP, increment bool) net.IP {
 	ipb := big.NewInt(0).SetBytes(ip)
 	if increment {

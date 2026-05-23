@@ -1,7 +1,8 @@
 package scanner
 
 import (
-	"bufio"
+	"encoding/csv"
+	"io"
 	"os"
 	"strings"
 
@@ -9,8 +10,8 @@ import (
 )
 
 var fakeDomains = map[string]bool{
-	"localhost":            true,
-	"server.domain.com":   true,
+	"localhost":              true,
+	"server.domain.com":      true,
 	"johnnasmalley.hostname": true,
 }
 
@@ -21,37 +22,44 @@ var fakeKeywords = []string{
 	"Unspecified",
 }
 
+const certDomainColumn = 2
+
 func ReadCSVDomains(path string) (<-chan types.Host, int, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, 0, err
 	}
+	defer f.Close()
+
+	r := csv.NewReader(f)
+	r.FieldsPerRecord = -1
+	r.LazyQuotes = true
 
 	var domains []string
 	seen := make(map[string]bool)
-	scanner := bufio.NewScanner(f)
-
 	first := true
-	for scanner.Scan() {
+	for {
+		rec, err := r.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, 0, err
+		}
 		if first {
 			first = false
 			continue
 		}
-		line := scanner.Text()
-		fields := strings.Split(line, ",")
-		if len(fields) < 3 {
+		if len(rec) <= certDomainColumn {
 			continue
 		}
-		domain := strings.TrimSpace(fields[2])
-		domain = strings.Trim(domain, "\"")
-
+		domain := strings.TrimSpace(rec[certDomainColumn])
 		if !isValidDomain(domain) || seen[domain] {
 			continue
 		}
 		seen[domain] = true
 		domains = append(domains, domain)
 	}
-	f.Close()
 
 	ch := make(chan types.Host, len(domains))
 	go func() {

@@ -1,33 +1,31 @@
 package output
 
 import (
+	"encoding/csv"
 	"fmt"
 	"io"
-	"strings"
 
-	"github.com/xtls/RealiTLScanner/internal/scanner"
 	"github.com/xtls/RealiTLScanner/internal/types"
 )
 
 type CSVWriter struct {
-	w    io.Writer
+	w    *csv.Writer
 	opts Options
 }
 
 func NewCSVWriter(w io.Writer, opts Options) *CSVWriter {
-	return &CSVWriter{w: w, opts: opts}
+	return &CSVWriter{w: csv.NewWriter(w), opts: opts}
 }
 
 func (c *CSVWriter) WriteHeader() error {
 	if c.opts.NoHeader {
 		return nil
 	}
-	header := "IP,ORIGIN,CERT_DOMAIN,CERT_ISSUER,GEO_CODE"
+	header := []string{"IP", "ORIGIN", "CERT_DOMAIN", "CERT_ISSUER", "GEO_CODE"}
 	if c.opts.Extended {
-		header += ",CDN_LEVEL,GFW_BLOCKED,SCORE"
+		header = append(header, "CDN_LEVEL", "GFW_BLOCKED", "SCORE")
 	}
-	_, err := fmt.Fprintln(c.w, header)
-	return err
+	return c.w.Write(header)
 }
 
 func (c *CSVWriter) WriteResult(result *types.ScanResult) error {
@@ -37,8 +35,8 @@ func (c *CSVWriter) WriteResult(result *types.ScanResult) error {
 	fields := []string{
 		result.IP.String(),
 		result.Host.Origin,
-		scanner.CsvEscape(result.TLS.CertDomain),
-		scanner.CsvEscape(result.TLS.CertIssuer),
+		result.TLS.CertDomain,
+		result.TLS.CertIssuer,
 		result.GeoCode,
 	}
 	if c.opts.Extended {
@@ -52,9 +50,15 @@ func (c *CSVWriter) WriteResult(result *types.ScanResult) error {
 		}
 		fields = append(fields, cdnLevel, gfwBlocked, fmt.Sprintf("%d", result.Score))
 	}
-	_, err := fmt.Fprintln(c.w, strings.Join(fields, ","))
-	return err
+	return c.w.Write(fields)
 }
 
-func (c *CSVWriter) Flush() error { return nil }
-func (c *CSVWriter) Close() error { return nil }
+func (c *CSVWriter) Flush() error {
+	c.w.Flush()
+	return c.w.Error()
+}
+
+func (c *CSVWriter) Close() error {
+	c.w.Flush()
+	return c.w.Error()
+}
