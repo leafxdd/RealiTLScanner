@@ -76,10 +76,14 @@ func DomainsToChannel(domains []string) (<-chan types.Host, int) {
 	var valid []string
 	for _, d := range domains {
 		d = strings.TrimSpace(d)
-		if d != "" && !unique[d] {
-			unique[d] = true
-			valid = append(valid, d)
+		if d == "" || unique[d] {
+			continue
 		}
+		if !StrictDomainName(d) {
+			continue
+		}
+		unique[d] = true
+		valid = append(valid, d)
 	}
 	ch := make(chan types.Host, len(valid))
 	go func() {
@@ -96,22 +100,7 @@ func IsValidDomain(domain string) bool {
 }
 
 func isValidDomain(domain string) bool {
-	if domain == "" || len(domain) < 3 {
-		return false
-	}
-	if strings.Contains(domain, "*") {
-		return false
-	}
-	if strings.Contains(domain, "..") {
-		return false
-	}
-	if strings.Contains(domain, ",") {
-		return false
-	}
-	if strings.Contains(domain, " ") {
-		return false
-	}
-	if !strings.Contains(domain, ".") {
+	if !StrictDomainName(domain) {
 		return false
 	}
 	if fakeDomains[domain] {
@@ -122,6 +111,7 @@ func isValidDomain(domain string) bool {
 			return false
 		}
 	}
+	// IPv4 literals (a.b.c.d with all parts ≤ 3 digits) are not real domains.
 	parts := strings.Split(domain, ".")
 	if len(parts) == 4 {
 		allShort := true

@@ -206,9 +206,32 @@ func LookupIP(addr string, enableIPv6 bool) (net.IP, error) {
 	return arr[0], nil
 }
 
+var (
+	domainRune  = regexp.MustCompile(`^[A-Za-z0-9\-.]+$`)
+	labelStrict = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9\-]{0,61}[A-Za-z0-9])?$`)
+)
+
 func ValidateDomainName(domain string) bool {
-	r := regexp.MustCompile(`(?m)^[A-Za-z0-9\-.]+$`)
-	return r.MatchString(domain)
+	return domainRune.MatchString(domain)
+}
+
+// StrictDomainName is the strict variant used by paths that ingest unvalidated
+// input (CSV column, direct CLI args). It rejects empty labels (a..b), labels
+// starting or ending with '-', labels longer than 63 chars, total length over
+// 253, and anything outside [A-Za-z0-9-].
+func StrictDomainName(domain string) bool {
+	if domain == "" || len(domain) > 253 {
+		return false
+	}
+	if !domainRune.MatchString(domain) {
+		return false
+	}
+	for _, label := range strings.Split(domain, ".") {
+		if !labelStrict.MatchString(label) {
+			return false
+		}
+	}
+	return true
 }
 
 func ExistOnlyOne(arr []string) bool {

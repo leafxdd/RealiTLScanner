@@ -257,6 +257,36 @@ func TestValidateDomainName(t *testing.T) {
 	}
 }
 
+func TestStrictDomainName_Edges(t *testing.T) {
+	tests := []struct {
+		domain string
+		valid  bool
+	}{
+		{"example.com", true},
+		{"sub.example.com", true},
+		{"a.b", true},
+		{"test-site.org", true},
+		{"", false},
+		{"a..b", false},
+		{"-x.com", false},
+		{"x-.com", false},
+		{"x.-com", false},
+		{".example.com", false},
+		{"example.com.", false},
+		{"invalid domain", false},
+		{"foo,bar", false},
+		{"*.example.com", false},
+		{strings.Repeat("a", 64) + ".com", false}, // label > 63
+		{strings.Repeat("a.", 130) + "a", false},  // total > 253
+	}
+	for _, tt := range tests {
+		got := StrictDomainName(tt.domain)
+		if got != tt.valid {
+			t.Errorf("StrictDomainName(%q) = %v, want %v", tt.domain, got, tt.valid)
+		}
+	}
+}
+
 func TestReadCSVDomains_HandlesQuotedFields(t *testing.T) {
 	// Earlier strings.Split parser would mis-count columns when an upstream
 	// field (e.g. CERT_ISSUER "Cloudflare, Inc.") contained a comma, shifting
