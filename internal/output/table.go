@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/xtls/RealiTLScanner/internal/detector"
 	"github.com/xtls/RealiTLScanner/internal/types"
 )
 
@@ -106,9 +105,8 @@ func (tw *TableWriter) WriteResult(result *types.ScanResult) {
 		hotPlain = "✓"
 	}
 
-	score := detector.ComputeScore(result)
-	result.Score = score
-	stars := detector.ScoreToStars(score)
+	score := result.Score
+	stars := strings.Repeat("*", score)
 	starsStr := colorize(stars, colorYellow, true)
 
 	statusCode := 0

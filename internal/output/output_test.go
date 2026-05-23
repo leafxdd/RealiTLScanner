@@ -139,3 +139,31 @@ func TestJSONWriter(t *testing.T) {
 		t.Error("expected summary field")
 	}
 }
+
+func TestTableWriter_RendersPreComputedScore(t *testing.T) {
+	var buf bytes.Buffer
+	tw := NewTableWriter(&buf, nil)
+	r := testResult()
+	r.Score = 3
+	tw.WriteResult(r)
+
+	out := stripANSI(buf.String())
+	if !strings.Contains(out, "***") {
+		t.Errorf("expected pre-computed score (3 stars) in output, got: %q", out)
+	}
+}
+
+// stripANSI removes ANSI color escapes for stable assertions.
+func stripANSI(s string) string {
+	for {
+		i := strings.Index(s, "\033[")
+		if i < 0 {
+			return s
+		}
+		end := strings.IndexByte(s[i:], 'm')
+		if end < 0 {
+			return s
+		}
+		s = s[:i] + s[i+end+1:]
+	}
+}

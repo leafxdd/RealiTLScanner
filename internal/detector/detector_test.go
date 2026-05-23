@@ -155,3 +155,31 @@ func TestStatusDetector_WritesWhenRedirectIsNil(t *testing.T) {
 		t.Errorf("expected StatusCode 200, got %d", result.Redirect.StatusCode)
 	}
 }
+
+func TestRunner_SetsScore(t *testing.T) {
+	d := NewTLSCheckDetector()
+	runner := NewRunner([]Detector{d}, 1)
+
+	in := make(chan *types.ScanResult, 1)
+	in <- &types.ScanResult{
+		Host: types.Host{Origin: "example.com", Type: types.HostTypeDomain},
+		TLS: &types.TLSInfo{
+			Version:       0x0304,
+			ALPN:          "h2",
+			CertDomain:    "example.com",
+			CertIssuer:    "Test CA",
+			HandshakeTime: 100 * time.Millisecond,
+			CertExpiry:    time.Now().Add(120 * 24 * time.Hour),
+		},
+	}
+	close(in)
+
+	out := runner.Run(context.Background(), in)
+	result := <-out
+	if result == nil {
+		t.Fatal("expected result from runner")
+	}
+	if result.Score <= 0 {
+		t.Errorf("expected runner to set Score > 0, got %d", result.Score)
+	}
+}

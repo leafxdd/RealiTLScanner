@@ -58,6 +58,7 @@ func (r *Runner) processOne(ctx context.Context, result *types.ScanResult) {
 			slog.Debug("Detector failed", "detector", d.Name(), "ip", result.IP, "err", err)
 		}
 	}
+	result.Score = ComputeScore(result)
 }
 
 func (r *Runner) AvailableDetectors() []string {
