@@ -2,8 +2,13 @@ package data
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestEmbeddedData(t *testing.T) {
@@ -70,5 +75,68 @@ func TestDataManager_EnsureReady_Embedded(t *testing.T) {
 	err := dm.EnsureReady(context.Background(), "cdn_keywords", "hot_websites")
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDataManager_DownloadRespectsMaxBytes(t *testing.T) {
+	// Server streams more bytes than we allow without setting Content-Length.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		buf := make([]byte, 4096)
+		for i := 0; i < 10; i++ {
+			if _, err := w.Write(buf); err != nil {
+				return
+			}
+		}
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	dm := NewDataManager(dir)
+	dm.files["test"] = &ManagedFile{
+		Name:        "test",
+		State:       StateMissing,
+		Path:        filepath.Join(dir, "test.bin"),
+		MaxAge:      time.Hour,
+		DownloadURL: srv.URL,
+		MaxBytes:    8192,
+	}
+
+	err := dm.EnsureReady(context.Background(), "test")
+	if err == nil {
+		t.Fatal("expected size-limit error")
+	}
+	if !strings.Contains(err.Error(), "exceeded") {
+		t.Errorf("expected 'exceeded' in error, got: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "test.bin")); !os.IsNotExist(err) {
+		t.Error("oversized download must not leave behind the final file")
+	}
+}
+
+func TestDataManager_DownloadHonorsContentLength(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "999999999")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	dm := NewDataManager(dir)
+	dm.files["test"] = &ManagedFile{
+		Name:        "test",
+		State:       StateMissing,
+		Path:        filepath.Join(dir, "test.bin"),
+		MaxAge:      time.Hour,
+		DownloadURL: srv.URL,
+		MaxBytes:    1024,
+	}
+
+	err := dm.EnsureReady(context.Background(), "test")
+	if err == nil {
+		t.Fatal("expected Content-Length error")
+	}
+	if !strings.Contains(err.Error(), "Content-Length") {
+		t.Errorf("expected Content-Length error, got: %v", err)
 	}
 }

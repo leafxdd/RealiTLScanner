@@ -29,7 +29,10 @@ type ManagedFile struct {
 	MaxAge      time.Duration
 	DownloadURL string
 	Embedded    []byte
+	MaxBytes    int64 // cap for downloaded payload; 0 → use defaultMaxBytes
 }
+
+const defaultMaxBytes int64 = 200 << 20 // 200 MiB
 
 type DataManager struct {
 	baseDir string
@@ -162,6 +165,11 @@ func (m *DataManager) download(ctx context.Context, f *ManagedFile) error {
 	f.State = StateLoading
 	m.mu.Unlock()
 
+	maxBytes := f.MaxBytes
+	if maxBytes <= 0 {
+		maxBytes = defaultMaxBytes
+	}
+
 	client := &http.Client{Timeout: 30 * time.Second}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, f.DownloadURL, nil)
 	if err != nil {
@@ -187,6 +195,13 @@ func (m *DataManager) download(ctx context.Context, f *ManagedFile) error {
 		return fmt.Errorf("download failed: HTTP %d", resp.StatusCode)
 	}
 
+	if resp.ContentLength > 0 && resp.ContentLength > maxBytes {
+		m.mu.Lock()
+		f.State = StateMissing
+		m.mu.Unlock()
+		return fmt.Errorf("Content-Length %d exceeds limit %d", resp.ContentLength, maxBytes)
+	}
+
 	if err := os.MkdirAll(filepath.Dir(f.Path), 0755); err != nil {
 		m.mu.Lock()
 		f.State = StateMissing
@@ -203,14 +218,22 @@ func (m *DataManager) download(ctx context.Context, f *ManagedFile) error {
 		return err
 	}
 
-	_, err = io.Copy(out, resp.Body)
-	out.Close()
-	if err != nil {
+	// Read at most maxBytes+1 so an over-limit body trips the size check
+	// instead of silently truncating.
+	written, copyErr := io.Copy(out, io.LimitReader(resp.Body, maxBytes+1))
+	closeErr := out.Close()
+	if copyErr == nil && closeErr != nil {
+		copyErr = closeErr
+	}
+	if copyErr == nil && written > maxBytes {
+		copyErr = fmt.Errorf("download exceeded %d bytes (got at least %d)", maxBytes, written)
+	}
+	if copyErr != nil {
 		os.Remove(tmpPath)
 		m.mu.Lock()
 		f.State = StateMissing
 		m.mu.Unlock()
-		return err
+		return copyErr
 	}
 
 	if err := os.Rename(tmpPath, f.Path); err != nil {
@@ -226,6 +249,6 @@ func (m *DataManager) download(ctx context.Context, f *ManagedFile) error {
 	f.LoadedAt = time.Now()
 	m.mu.Unlock()
 
-	slog.Info("Downloaded data file", "name", f.Name, "path", f.Path)
+	slog.Info("Downloaded data file", "name", f.Name, "path", f.Path, "bytes", written)
 	return nil
 }
