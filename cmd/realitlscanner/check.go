@@ -2,12 +2,12 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"flag"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
-	"strconv"
 	"time"
 
 	"github.com/xtls/RealiTLScanner/internal/data"
@@ -83,7 +83,7 @@ func runCheck(args []string) {
 
 	fmt.Printf("=== Check: %s (%s:%d) ===\n", domain, ip.String(), port)
 	if result.TLS != nil {
-		fmt.Printf("TLS Version:  %s\n", tlsVersionName(result.TLS.Version))
+		fmt.Printf("TLS Version:  %s\n", tls.VersionName(result.TLS.Version))
 		fmt.Printf("ALPN:         %s\n", result.TLS.ALPN)
 		fmt.Printf("Cert Domain:  %s\n", result.TLS.CertDomain)
 		fmt.Printf("Cert Issuer:  %s\n", result.TLS.CertIssuer)
@@ -102,12 +102,8 @@ func runCheck(args []string) {
 	if result.GFW != nil {
 		fmt.Printf("GFW Blocked:  %v\n", result.GFW.Blocked)
 	}
-	if result.HotSite != nil {
-		fmt.Printf("Hot Website:  %v", result.HotSite.IsHot)
-		if result.HotSite.IsHot {
-			fmt.Printf(" (%s)", result.HotSite.Category)
-		}
-		fmt.Println()
+	if result.HotSite != nil && result.HotSite.IsHot {
+		fmt.Printf("Hot Website:  true (%s)\n", result.HotSite.Category)
 	}
 	if result.CertValid != nil {
 		sniDisplay := "N/A"
@@ -122,21 +118,6 @@ func runCheck(args []string) {
 			fmt.Printf(" → %s", result.Redirect.Target)
 		}
 		fmt.Println()
-	}
-}
-
-func tlsVersionName(v uint16) string {
-	switch v {
-	case 0x0304:
-		return "TLS 1.3"
-	case 0x0303:
-		return "TLS 1.2"
-	case 0x0302:
-		return "TLS 1.1"
-	case 0x0301:
-		return "TLS 1.0"
-	default:
-		return "0x" + strconv.FormatUint(uint64(v), 16)
 	}
 }
 
