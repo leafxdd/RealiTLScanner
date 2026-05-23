@@ -107,6 +107,9 @@ func IterateAddrInfiniteCtx(ctx context.Context, addr string, enableIPv6, infini
 			return hostChan
 		}
 	}
+	if v4 := ip.To4(); v4 != nil {
+		ip = v4
+	}
 	go func() {
 		defer close(hostChan)
 		send := func(h types.Host) bool {
@@ -129,11 +132,17 @@ func IterateAddrInfiniteCtx(ctx context.Context, addr string, enableIPv6, infini
 		for i := 0; i < math.MaxInt; i++ {
 			if i%2 == 0 {
 				lowIP = NextIP(lowIP, false)
+				if lowIP == nil {
+					return
+				}
 				if !send(types.Host{IP: lowIP, Origin: lowIP.String(), Type: types.HostTypeIP}) {
 					return
 				}
 			} else {
 				highIP = NextIP(highIP, true)
+				if highIP == nil {
+					return
+				}
 				if !send(types.Host{IP: highIP, Origin: highIP.String(), Type: types.HostTypeIP}) {
 					return
 				}
@@ -197,7 +206,13 @@ func NextIP(ip net.IP, increment bool) net.IP {
 	} else {
 		ipb.Sub(ipb, big.NewInt(1))
 	}
+	if ipb.Sign() < 0 {
+		return nil
+	}
 	b := ipb.Bytes()
+	if len(b) > len(ip) {
+		return nil
+	}
 	b = append(make([]byte, len(ip)-len(b)), b...)
 	return b
 }

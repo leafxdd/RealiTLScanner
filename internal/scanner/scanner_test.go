@@ -254,3 +254,50 @@ func TestIterateCtx_CIDRCancel(t *testing.T) {
 	}
 }
 
+func TestNextIP_OverflowIPv4ReturnsNil(t *testing.T) {
+	max := net.ParseIP("255.255.255.255").To4()
+	if got := NextIP(max, true); got != nil {
+		t.Errorf("NextIP(255.255.255.255, +1) = %v, want nil", got)
+	}
+}
+
+func TestNextIP_UnderflowIPv4ReturnsNil(t *testing.T) {
+	min := net.ParseIP("0.0.0.0").To4()
+	if got := NextIP(min, false); got != nil {
+		t.Errorf("NextIP(0.0.0.0, -1) = %v, want nil", got)
+	}
+}
+
+func TestNextIP_NormalIncrement(t *testing.T) {
+	ip := net.ParseIP("10.0.0.5").To4()
+	got := NextIP(ip, true)
+	if got == nil {
+		t.Fatal("expected non-nil")
+	}
+	if got.String() != "10.0.0.6" {
+		t.Errorf("NextIP(10.0.0.5, +1) = %v, want 10.0.0.6", got)
+	}
+}
+
+func TestIterateAddrInfinite_StopsAtBoundary(t *testing.T) {
+	// Start near IPv4 max; infinite mode alternates low/high.
+	// High side will overflow after a few steps and should close the channel.
+	ch := IterateAddrInfinite("255.255.255.253", false, true)
+	count := 0
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case _, ok := <-ch:
+			if !ok {
+				// channel closed cleanly — expected after overflow stops producer
+				return
+			}
+			count++
+			if count > 1000 {
+				t.Fatalf("producer did not stop after overflow (received %d)", count)
+			}
+		case <-deadline:
+			t.Fatalf("did not observe channel close within 3s (received %d)", count)
+		}
+	}
+}
