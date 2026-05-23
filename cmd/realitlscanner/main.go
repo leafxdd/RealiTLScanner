@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/xtls/RealiTLScanner/internal/data"
@@ -131,10 +132,23 @@ func runLegacy(args []string) {
 		EnableIPv6: enableIPv6,
 	}
 
+	var (
+		scanCount atomic.Int64
+		startedAt = time.Now()
+	)
 	pipeCfg := pipeline.Config{
 		ScanWorkers: thread,
 		Mode:        pipeline.ModeStream,
 		ScanConfig:  cfg,
+		OnScan: func() {
+			n := scanCount.Add(1)
+			// Heartbeat every 50 scans so long /24-style sweeps don't look hung.
+			if n%50 == 0 {
+				slog.Info("Scanning progress",
+					"scanned", n,
+					"elapsed", time.Since(startedAt).Round(time.Second).String())
+			}
+		},
 	}
 
 	p := pipeline.New(pipeCfg, geoReader, nil)
@@ -145,7 +159,6 @@ func runLegacy(args []string) {
 		return
 	}
 
-	t := time.Now()
 	slog.Info("Started scanning")
 	for result := range outCh {
 		if err := w.WriteResult(result); err != nil {
@@ -155,7 +168,12 @@ func runLegacy(args []string) {
 	if err := w.Close(); err != nil {
 		slog.Error("Error closing writer", "err", err)
 	}
-	slog.Info("Completed", "elapsed", time.Since(t).String())
+	stats := p.Stats()
+	slog.Info("Completed",
+		"elapsed", time.Since(startedAt).Round(time.Second).String(),
+		"attempted", stats.Attempted,
+		"tls_failed", stats.TLSFailed,
+		"dropped", stats.Dropped)
 }
 
 func runScan(args []string) {
