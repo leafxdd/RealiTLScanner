@@ -153,6 +153,83 @@ func TestTableWriter_RendersPreComputedScore(t *testing.T) {
 	}
 }
 
+func TestJSONWriter_SummaryStats_MixedResults(t *testing.T) {
+	var buf bytes.Buffer
+	w := NewJSONWriter(&buf, Options{Pretty: false})
+	for i := 0; i < 5; i++ {
+		r := testResult()
+		r.Feasible = i < 3 // 3 feasible, 2 non-feasible
+		if err := w.WriteResult(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var out jsonOutput
+	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Summary.TotalScanned != 5 {
+		t.Errorf("TotalScanned: got %d, want 5", out.Summary.TotalScanned)
+	}
+	if out.Summary.FeasibleCount != 3 {
+		t.Errorf("FeasibleCount: got %d, want 3", out.Summary.FeasibleCount)
+	}
+	if out.Summary.DetectionRate != "60.0%" {
+		t.Errorf("DetectionRate: got %q, want %q", out.Summary.DetectionRate, "60.0%")
+	}
+}
+
+func TestJSONWriter_SummaryStats_EmptyResults(t *testing.T) {
+	var buf bytes.Buffer
+	w := NewJSONWriter(&buf, Options{})
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var out jsonOutput
+	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Summary.TotalScanned != 0 {
+		t.Errorf("TotalScanned: got %d, want 0", out.Summary.TotalScanned)
+	}
+	if out.Summary.FeasibleCount != 0 {
+		t.Errorf("FeasibleCount: got %d, want 0", out.Summary.FeasibleCount)
+	}
+	if out.Summary.DetectionRate != "N/A" {
+		t.Errorf("DetectionRate: got %q, want %q", out.Summary.DetectionRate, "N/A")
+	}
+}
+
+func TestJSONWriter_SummaryStats_AllNonFeasible(t *testing.T) {
+	var buf bytes.Buffer
+	w := NewJSONWriter(&buf, Options{})
+	for i := 0; i < 4; i++ {
+		r := testResult()
+		r.Feasible = false
+		if err := w.WriteResult(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var out jsonOutput
+	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Summary.FeasibleCount != 0 {
+		t.Errorf("FeasibleCount: got %d, want 0", out.Summary.FeasibleCount)
+	}
+	if out.Summary.DetectionRate != "0.0%" {
+		t.Errorf("DetectionRate: got %q, want %q", out.Summary.DetectionRate, "0.0%")
+	}
+}
+
 // stripANSI removes ANSI color escapes for stable assertions.
 func stripANSI(s string) string {
 	for {

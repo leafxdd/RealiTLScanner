@@ -45,9 +45,10 @@ type jsonSummary struct {
 }
 
 type JSONWriter struct {
-	w       io.Writer
-	results []jsonResult
-	opts    Options
+	w             io.Writer
+	results       []jsonResult
+	feasibleCount int
+	opts          Options
 }
 
 func NewJSONWriter(w io.Writer, opts Options) *JSONWriter {
@@ -59,12 +60,20 @@ func (j *JSONWriter) WriteHeader() error { return nil }
 func (j *JSONWriter) WriteResult(result *types.ScanResult) error {
 	r := toJSONResult(result)
 	j.results = append(j.results, r)
+	if result.Feasible {
+		j.feasibleCount++
+	}
 	return nil
 }
 
 func (j *JSONWriter) Flush() error { return nil }
 
 func (j *JSONWriter) Close() error {
+	total := len(j.results)
+	rate := "N/A"
+	if total > 0 {
+		rate = fmt.Sprintf("%.1f%%", float64(j.feasibleCount)/float64(total)*100)
+	}
 	out := jsonOutput{
 		Metadata: jsonMetadata{
 			Version:   "2.0",
@@ -72,9 +81,9 @@ func (j *JSONWriter) Close() error {
 		},
 		Results: j.results,
 		Summary: jsonSummary{
-			TotalScanned:  len(j.results),
-			FeasibleCount: len(j.results),
-			DetectionRate: "100%",
+			TotalScanned:  total,
+			FeasibleCount: j.feasibleCount,
+			DetectionRate: rate,
 		},
 	}
 	enc := json.NewEncoder(j.w)
