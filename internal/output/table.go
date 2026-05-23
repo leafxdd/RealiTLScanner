@@ -65,9 +65,38 @@ func (tw *TableWriter) SetTotal(n int) {
 	tw.total = n
 }
 
-// tableSepLen matches the plain-text column total of the file-mode layout:
-// 30 + 1 + 8 + 1 + 10 + 1 + 10 + 1 + 8 + 1 + 6 + 1 + 6 + 1 + 8 = 93.
-const tableSepLen = 93
+// tableHeader is the single source of truth for column layout. The dash
+// separator below is sized by its actual terminal cell width — Chinese
+// labels take 2 cells per glyph, so a naive rune count under-sizes the
+// separator and lets the last two columns leak past it.
+var (
+	tableHeader = fmt.Sprintf("%-30s %-8s %-10s %-10s %-8s %-6s %-6s %-8s",
+		"最终域名", "基础条件", "握手时间", "证书时间", "CDN", "热门", "推荐", "页面状态")
+	tableSepLen = stringVisualWidth(tableHeader)
+)
+
+// stringVisualWidth returns the terminal cell width of s, counting CJK and
+// fullwidth characters as 2 cells. Sufficient for our header — we don't pull
+// in go-runewidth for 8 fixed labels.
+func stringVisualWidth(s string) int {
+	w := 0
+	for _, r := range s {
+		switch {
+		case (r >= 0x1100 && r <= 0x115F), // Hangul Jamo
+			(r >= 0x2E80 && r <= 0x9FFF),  // CJK Radicals .. Unified Ideographs
+			(r >= 0xA000 && r <= 0xA4CF),  // Yi
+			(r >= 0xAC00 && r <= 0xD7A3),  // Hangul Syllables
+			(r >= 0xF900 && r <= 0xFAFF),  // CJK Compatibility Ideographs
+			(r >= 0xFE30 && r <= 0xFE4F),  // CJK Compatibility Forms
+			(r >= 0xFF00 && r <= 0xFF60),  // Fullwidth forms
+			(r >= 0xFFE0 && r <= 0xFFE6):  // Fullwidth signs
+			w += 2
+		default:
+			w++
+		}
+	}
+	return w
+}
 
 var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
@@ -81,19 +110,17 @@ func (tw *TableWriter) writeTerm(s string) {
 }
 
 func (tw *TableWriter) WriteHeader() {
-	header := fmt.Sprintf("%-30s %-8s %-10s %-10s %-8s %-6s %-6s %-8s",
-		"最终域名", "基础条件", "握手时间", "证书时间", "CDN", "热门", "推荐", "页面状态")
 	sep := strings.Repeat("-", tableSepLen)
 
 	tw.mu.Lock()
 	defer tw.mu.Unlock()
 	tw.writeTerm(sep + "\n")
-	tw.writeTerm(header + "\n")
+	tw.writeTerm(tableHeader + "\n")
 	tw.writeTerm(sep + "\n")
 
 	if tw.fileW != nil {
 		fmt.Fprintln(tw.fileW, sep)
-		fmt.Fprintln(tw.fileW, header)
+		fmt.Fprintln(tw.fileW, tableHeader)
 		fmt.Fprintln(tw.fileW, sep)
 	}
 }
