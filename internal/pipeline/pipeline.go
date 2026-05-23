@@ -63,8 +63,6 @@ func (p *Pipeline) Stats() Stats {
 }
 
 func (p *Pipeline) Run(ctx context.Context, hosts <-chan types.Host) (<-chan *types.ScanResult, error) {
-	ctx, cancel := context.WithCancel(ctx)
-
 	scanResultCh := make(chan *types.ScanResult, 128)
 
 	var scanWg sync.WaitGroup
@@ -111,12 +109,6 @@ func (p *Pipeline) Run(ctx context.Context, hosts <-chan types.Host) (<-chan *ty
 	} else {
 		outputCh = scanResultCh
 	}
-
-	go func() {
-		<-ctx.Done()
-		cancel()
-	}()
-	_ = cancel
 
 	return outputCh, nil
 }
