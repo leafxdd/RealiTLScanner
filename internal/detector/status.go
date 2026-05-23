@@ -30,6 +30,9 @@ func (d *StatusDetector) Detect(ctx context.Context, result *types.ScanResult) e
 	if result.Redirect != nil {
 		return nil
 	}
+	if d.client == nil && !isSafeForProbe(result.TLS.CertDomain) {
+		return nil
+	}
 	url := fmt.Sprintf("https://%s", result.TLS.CertDomain)
 
 	client := d.client

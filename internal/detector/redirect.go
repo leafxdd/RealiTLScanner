@@ -27,6 +27,9 @@ func (d *RedirectDetector) Detect(ctx context.Context, result *types.ScanResult)
 		return nil
 	}
 	domain := result.TLS.CertDomain
+	if !isSafeForProbe(domain) {
+		return nil
+	}
 	url := fmt.Sprintf("https://%s", domain)
 
 	client := &http.Client{
