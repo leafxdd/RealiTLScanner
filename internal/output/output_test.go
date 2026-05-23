@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/xtls/RealiTLScanner/internal/types"
 )
@@ -308,6 +309,22 @@ func TestJSONWriter_ExtendedFields_Populated(t *testing.T) {
 	}
 	if got.Error != "none" {
 		t.Errorf("Error: got %q, want %q", got.Error, "none")
+	}
+}
+
+func TestTableWriter_TruncatesByRune(t *testing.T) {
+	// 多字节中文字符若按 byte 截断会破坏 UTF-8。
+	long := strings.Repeat("中", 40) // 40 runes / 120 bytes
+	got := truncateByRune(long, 28)
+	if utf8.RuneCountInString(got) != 30 { // 28 + 2 dots
+		t.Errorf("rune count: got %d, want 30", utf8.RuneCountInString(got))
+	}
+	if !strings.HasSuffix(got, "..") {
+		t.Errorf("expected '..' suffix, got %q", got)
+	}
+	// Output must remain valid UTF-8 (no mid-rune cut).
+	if !utf8.ValidString(got) {
+		t.Errorf("truncated string is not valid UTF-8: %q", got)
 	}
 }
 

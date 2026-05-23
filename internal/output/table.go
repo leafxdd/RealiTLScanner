@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/xtls/RealiTLScanner/internal/types"
 )
@@ -108,10 +109,7 @@ func (tw *TableWriter) WriteResult(result *types.ScanResult) {
 	defer tw.mu.Unlock()
 	tw.count++
 
-	domain := result.TLS.CertDomain
-	if len(domain) > 28 {
-		domain = domain[:28] + ".."
-	}
+	domain := truncateByRune(result.TLS.CertDomain, 28)
 
 	baseOk := result.Feasible
 	baseStr := colorize("✓", colorGreen, baseOk)
@@ -206,6 +204,16 @@ func (tw *TableWriter) WriteSummaryWithStats(suitable, unsuitable int, elapsed t
 	if tw.fileW != nil {
 		fmt.Fprint(tw.fileW, summary)
 	}
+}
+
+// truncateByRune cuts s to at most max runes, appending ".." when truncated.
+// Byte-slicing a multi-byte string mid-rune would produce mojibake.
+func truncateByRune(s string, max int) string {
+	if utf8.RuneCountInString(s) <= max {
+		return s
+	}
+	runes := []rune(s)
+	return string(runes[:max]) + ".."
 }
 
 func colorize(s, color string, apply bool) string {
