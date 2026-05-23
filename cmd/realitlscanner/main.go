@@ -83,7 +83,10 @@ func runLegacy(args []string) {
 		return
 	}
 
-	hostChan := resolveHosts(addr, in, url, enableIPv6, infinite)
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
+
+	hostChan := resolveHosts(ctx, addr, in, url, enableIPv6, infinite)
 	if hostChan == nil {
 		return
 	}
@@ -124,8 +127,6 @@ func runLegacy(args []string) {
 	}
 
 	p := pipeline.New(pipeCfg, geoReader, nil)
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer cancel()
 
 	outCh, err := p.Run(ctx, hostChan)
 	if err != nil {
@@ -254,7 +255,7 @@ func runScan(args []string) {
 			fs.PrintDefaults()
 			return
 		}
-		rawHosts := resolveHosts(addr, in, url, enableIPv6, infinite)
+		rawHosts := resolveHosts(ctx, addr, in, url, enableIPv6, infinite)
 		if rawHosts == nil {
 			return
 		}
@@ -427,9 +428,9 @@ func writeTempFile(content []byte, name string) string {
 	return f.Name()
 }
 
-func resolveHosts(addr, in, url string, enableIPv6, infinite bool) <-chan types.Host {
+func resolveHosts(ctx context.Context, addr, in, url string, enableIPv6, infinite bool) <-chan types.Host {
 	if addr != "" {
-		return scanner.IterateAddrInfinite(addr, enableIPv6, infinite)
+		return scanner.IterateAddrInfiniteCtx(ctx, addr, enableIPv6, infinite)
 	}
 	if in != "" {
 		f, err := os.Open(in)
@@ -437,7 +438,7 @@ func resolveHosts(addr, in, url string, enableIPv6, infinite bool) <-chan types.
 			slog.Error("Error reading file", "path", in)
 			return nil
 		}
-		return scanner.Iterate(f, enableIPv6)
+		return scanner.IterateCtx(ctx, f, enableIPv6)
 	}
 	if url != "" {
 		slog.Info("Fetching url...")
@@ -459,7 +460,7 @@ func resolveHosts(addr, in, url string, enableIPv6, infinite bool) <-chan types.
 		}
 		domains = scanner.RemoveDuplicateStr(domains)
 		slog.Info("Parsed domains", "count", len(domains))
-		return scanner.Iterate(strings.NewReader(strings.Join(domains, "\n")), enableIPv6)
+		return scanner.IterateCtx(ctx, strings.NewReader(strings.Join(domains, "\n")), enableIPv6)
 	}
 	return nil
 }

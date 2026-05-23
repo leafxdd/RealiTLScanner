@@ -89,10 +89,14 @@ func IterateAddr(addr string, enableIPv6 bool) <-chan types.Host {
 }
 
 func IterateAddrInfinite(addr string, enableIPv6, infinite bool) <-chan types.Host {
+	return IterateAddrInfiniteCtx(context.Background(), addr, enableIPv6, infinite)
+}
+
+func IterateAddrInfiniteCtx(ctx context.Context, addr string, enableIPv6, infinite bool) <-chan types.Host {
 	hostChan := make(chan types.Host)
 	_, _, err := net.ParseCIDR(addr)
 	if err == nil {
-		return Iterate(strings.NewReader(addr), enableIPv6)
+		return IterateCtx(ctx, strings.NewReader(addr), enableIPv6)
 	}
 	ip := net.ParseIP(addr)
 	if ip == nil {
@@ -105,10 +109,16 @@ func IterateAddrInfinite(addr string, enableIPv6, infinite bool) <-chan types.Ho
 	}
 	go func() {
 		defer close(hostChan)
-		hostChan <- types.Host{
-			IP:     ip,
-			Origin: addr,
-			Type:   types.HostTypeIP,
+		send := func(h types.Host) bool {
+			select {
+			case <-ctx.Done():
+				return false
+			case hostChan <- h:
+				return true
+			}
+		}
+		if !send(types.Host{IP: ip, Origin: addr, Type: types.HostTypeIP}) {
+			return
 		}
 		if !infinite {
 			return
@@ -119,17 +129,13 @@ func IterateAddrInfinite(addr string, enableIPv6, infinite bool) <-chan types.Ho
 		for i := 0; i < math.MaxInt; i++ {
 			if i%2 == 0 {
 				lowIP = NextIP(lowIP, false)
-				hostChan <- types.Host{
-					IP:     lowIP,
-					Origin: lowIP.String(),
-					Type:   types.HostTypeIP,
+				if !send(types.Host{IP: lowIP, Origin: lowIP.String(), Type: types.HostTypeIP}) {
+					return
 				}
 			} else {
 				highIP = NextIP(highIP, true)
-				hostChan <- types.Host{
-					IP:     highIP,
-					Origin: highIP.String(),
-					Type:   types.HostTypeIP,
+				if !send(types.Host{IP: highIP, Origin: highIP.String(), Type: types.HostTypeIP}) {
+					return
 				}
 			}
 		}
