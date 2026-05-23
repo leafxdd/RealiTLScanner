@@ -63,6 +63,12 @@ func (tw *TableWriter) WriteHeader() {
 }
 
 func (tw *TableWriter) WriteResult(result *types.ScanResult) {
+	if result.TLS == nil {
+		// No TLS info → nothing meaningful to render. The pipeline filters
+		// non-feasible scans out by default; this is only reachable in
+		// PassAll mode or when a downstream detector ran first.
+		return
+	}
 	tw.mu.Lock()
 	defer tw.mu.Unlock()
 	tw.count++

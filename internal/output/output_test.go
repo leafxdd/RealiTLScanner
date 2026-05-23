@@ -231,6 +231,20 @@ func TestJSONWriter_SummaryStats_AllNonFeasible(t *testing.T) {
 	}
 }
 
+func TestTableWriter_HandlesNilTLS(t *testing.T) {
+	var buf bytes.Buffer
+	tw := NewTableWriter(&buf, nil)
+	tw.WriteResult(&types.ScanResult{
+		Host: types.Host{Origin: "example.com", Type: types.HostTypeDomain},
+		IP:   net.ParseIP("1.2.3.4"),
+		// TLS intentionally nil
+	})
+	// Should not panic; output should be empty.
+	if buf.Len() != 0 {
+		t.Errorf("expected no output for nil TLS, got %q", buf.String())
+	}
+}
+
 func TestJSONWriter_ExtendedFields_Populated(t *testing.T) {
 	var buf bytes.Buffer
 	w := NewJSONWriter(&buf, Options{Pretty: false})
