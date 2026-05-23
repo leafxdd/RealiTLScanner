@@ -206,6 +206,55 @@ func TestStatusDetector_WritesWhenRedirectIsNil(t *testing.T) {
 	}
 }
 
+func TestRedirectDetector_HonorsInjectedClient(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", "https://elsewhere.example/")
+		w.WriteHeader(http.StatusMovedPermanently)
+	}))
+	defer server.Close()
+
+	u, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	d := NewRedirectDetector(2 * time.Second)
+	d.client = server.Client() // inject — bypasses isSafeForProbe
+	d.client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+
+	result := &types.ScanResult{
+		TLS: &types.TLSInfo{CertDomain: u.Host},
+	}
+	if err := d.Detect(context.Background(), result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Redirect == nil {
+		t.Fatal("expected Redirect set")
+	}
+	if result.Redirect.StatusCode != http.StatusMovedPermanently {
+		t.Errorf("StatusCode: got %d, want 301", result.Redirect.StatusCode)
+	}
+	if result.Redirect.Target != "https://elsewhere.example/" {
+		t.Errorf("Target: got %q, want elsewhere", result.Redirect.Target)
+	}
+}
+
+func TestRedirectDetector_ReuseTransport(t *testing.T) {
+	d := NewRedirectDetector(2 * time.Second)
+	if d.client == nil {
+		t.Fatal("expected pre-constructed client")
+	}
+	tr, ok := d.client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatal("expected *http.Transport on default client")
+	}
+	if tr.MaxIdleConnsPerHost == 0 {
+		t.Error("expected MaxIdleConnsPerHost > 0 (connection pool reuse)")
+	}
+}
+
 func TestRunner_SetsScore(t *testing.T) {
 	d := NewTLSCheckDetector()
 	runner := NewRunner([]Detector{d}, 1)
