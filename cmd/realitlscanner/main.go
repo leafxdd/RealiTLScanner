@@ -391,7 +391,6 @@ func buildDetectors(dm *data.DataManager, geoReader *geo.Geo, filter string) []d
 		detector.NewLocationDetector(geoReader),
 		detector.NewRedirectDetector(5 * time.Second),
 		detector.NewStatusDetector(5 * time.Second),
-		detector.NewResolverDetector(5 * time.Second),
 	}
 
 	if filter == "all" {

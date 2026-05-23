@@ -12,7 +12,6 @@ func TestDetectorInterface(t *testing.T) {
 		NewTLSCheckDetector(),
 		NewRedirectDetector(0),
 		NewStatusDetector(0),
-		NewResolverDetector(0),
 	}
 
 	for _, d := range detectors {
