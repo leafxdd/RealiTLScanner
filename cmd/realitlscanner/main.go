@@ -119,7 +119,8 @@ func runLegacy(args []string) {
 		return
 	}
 
-	geoReader := geo.NewGeo()
+	geoPath, _ := dm.GetPath("geoip")
+	geoReader := geo.NewGeo(geoPath)
 	defer geoReader.Close()
 
 	cfg := scanner.ScanConfig{
@@ -215,7 +216,8 @@ func runScan(args []string) {
 		}
 	}
 
-	geoReader := geo.NewGeo()
+	geoPath, _ := dm.GetPath("geoip")
+	geoReader := geo.NewGeo(geoPath)
 	defer geoReader.Close()
 
 	dets := buildDetectors(dm, geoReader, "all")

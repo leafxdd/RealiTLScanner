@@ -11,10 +11,15 @@ type Geo struct {
 	reader *geoip2.Reader
 }
 
-func NewGeo() *Geo {
-	db, err := geoip2.Open("Country.mmdb")
+// NewGeo opens the GeoIP database at path. Empty path or open failure leaves
+// the lookup disabled (GetGeo returns "N/A") rather than aborting startup.
+func NewGeo(path string) *Geo {
+	if path == "" {
+		return &Geo{}
+	}
+	db, err := geoip2.Open(path)
 	if err != nil {
-		slog.Warn("GeoIP database not found, geo lookup disabled", "err", err)
+		slog.Warn("GeoIP database not found, geo lookup disabled", "path", path, "err", err)
 		return &Geo{}
 	}
 	return &Geo{reader: db}

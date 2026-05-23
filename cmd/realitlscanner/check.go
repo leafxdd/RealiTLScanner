@@ -53,16 +53,27 @@ func runCheck(args []string) {
 		Type:   types.HostTypeDomain,
 	}
 
-	geoReader := geo.NewGeo()
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
+
+	dm := data.NewDataManager(dataDir)
+	if err := dm.EnsureReady(ctx, "cdn_keywords", "hot_websites", "gfwlist", "geoip"); err != nil {
+		if skipDownload {
+			slog.Warn("Data file download failed, continuing with limited detection", "err", err)
+		} else {
+			slog.Error("Data file download failed (use -skip-download to continue anyway)", "err", err)
+			return
+		}
+	}
+
+	geoPath, _ := dm.GetPath("geoip")
+	geoReader := geo.NewGeo(geoPath)
 	defer geoReader.Close()
 
 	cfg := scanner.ScanConfig{
 		Port:    port,
 		Timeout: time.Duration(timeout) * time.Second,
 	}
-
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer cancel()
 
 	result := scanner.ScanTLS(ctx, host, cfg, geoReader)
 	if result.Error != "" {
@@ -80,15 +91,6 @@ func runCheck(args []string) {
 	fmt.Printf("GeoCode:      %s\n", result.GeoCode)
 	fmt.Printf("Feasible:     %v\n", result.Feasible)
 
-	dm := data.NewDataManager(dataDir)
-	if err := dm.EnsureReady(ctx, "cdn_keywords", "hot_websites", "gfwlist"); err != nil {
-		if skipDownload {
-			slog.Warn("Data file download failed, continuing with limited detection", "err", err)
-		} else {
-			slog.Error("Data file download failed (use -skip-download to continue anyway)", "err", err)
-			return
-		}
-	}
 	dets := buildDetectors(dm, geoReader, "all")
 	runner := detector.NewRunner(dets, 1)
 	runner.ProcessOne(ctx, result)
