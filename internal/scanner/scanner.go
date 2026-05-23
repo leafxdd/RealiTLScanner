@@ -60,6 +60,10 @@ func ScanTLS(ctx context.Context, host types.Host, cfg ScanConfig, geoReader *ge
 	}
 
 	tlsCfg := &tls.Config{
+		// InsecureSkipVerify is intentional: this scanner aims to discover
+		// Reali-TLS-feasible servers, not to validate PKI. Trust chain,
+		// revocation, and CA signature are not checked. CertValidResult
+		// reflects only feasibility heuristics + SNI hostname match.
 		InsecureSkipVerify: true,
 		NextProtos:         []string{"h2", "http/1.1"},
 		CurvePreferences:   []tls.CurveID{tls.X25519},

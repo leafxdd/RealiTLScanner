@@ -36,6 +36,13 @@ type HotSiteResult struct {
 	Category string `json:"category,omitempty"`
 }
 
+// CertValidResult reflects basic TLS feasibility from the scanner's point of
+// view — TLS 1.3 + h2 ALPN + non-empty CertDomain/Issuer — and whether the
+// SNI passed to the handshake matches the leaf cert (via x509.VerifyHostname).
+//
+// This is NOT a full PKI verification: ScanTLS uses InsecureSkipVerify=true
+// so chain-of-trust, revocation, and CA signature are not checked. Consumers
+// that need true validity must perform their own verify against system roots.
 type CertValidResult struct {
 	Valid     bool      `json:"valid"`
 	SNIMatch  *bool     `json:"sni_match,omitempty"`
