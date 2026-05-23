@@ -6,14 +6,16 @@ A high-performance TLS certificate scanner with integrated Reality protocol doma
 
 ## Features
 
-- TLS certificate scanning (IP, CIDR, domain)
+- TLS certificate scanning (IP, CIDR, domain) with context-aware cancellation
 - Concurrent scanning with configurable thread count
-- GeoIP location lookup
-- **Domain feasibility detection**: CDN, GFW, TLS validation, hot website, redirect, HTTP status
+- GeoIP location lookup (configurable data dir)
+- **Domain feasibility detection**: CDN, GFW, TLS validation (SAN + wildcard via `VerifyHostname`), hot website, redirect, HTTP status
+- **SSRF-safe detector probes**: redirect/status detectors reject private, loopback, link-local, and metadata addresses
 - **Star rating** (0-5): handshake time, CDN, popularity, certificate validity
-- **Formatted table output** with color coding
-- **Real-time progress reporting**
+- **Formatted table output** with color coding (auto-disabled on non-TTY / `NO_COLOR`)
+- **Scan statistics**: per-pipeline `attempted / tls_failed / dropped` counters surfaced in summary
 - **Graceful Ctrl+C**: in scan mode, interrupt scanning phase to immediately proceed to detection with collected domains
+- **Concurrent-safe data manager**: `singleflight`-deduplicated downloads, size-capped (200 MiB default) responses
 - Docker support
 
 ## Building
@@ -24,6 +26,22 @@ Requirement: Go 1.21+
 make build
 # or
 go build -o RealiTLScanner ./cmd/realitlscanner
+
+# Stripped, reproducible builds:
+go build -trimpath -ldflags='-s -w' -o RealiTLScanner ./cmd/realitlscanner
+```
+
+### Cross-compile
+
+```bash
+# Linux x86_64
+GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o RealiTLScanner-linux-amd64 ./cmd/realitlscanner
+
+# Linux ARM64
+GOOS=linux GOARCH=arm64 go build -trimpath -ldflags='-s -w' -o RealiTLScanner-linux-arm64 ./cmd/realitlscanner
+
+# Windows
+GOOS=windows GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o RealiTLScanner-windows-amd64.exe ./cmd/realitlscanner
 ```
 
 ## Usage
@@ -85,18 +103,21 @@ Note: Basic mode (without `scan`) only downloads `Country.mmdb`. The `scan` comm
 #### Output Example
 
 ```
-------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------
 最终域名                           基础条件     握手时间       证书时间       CDN      热门     推荐     页面状态
-------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------
 yz.iosjy.top                   ✓          341ms        69天         无       -      ****     200
 blog.bingserve.xyz             ✓          447ms        83天         无       -      ****     200
 yingyaozw.com                  ✓          439ms        246天        无       -      ****     200
 code.memoncler.com             ✓          783ms        5天          无       -      ***      -
 o03.cc                         ✗          1624ms       88天         无       -      ***      405
 
-------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------
 检测完成: 31 个域名, 29 个适合 (93.5%), 耗时 12.9s
+扫描统计: attempted=256  tls_failed=210  dropped=15
 ```
+
+Color output is automatically disabled when stdout is not a TTY (redirected to a file/pipe) or when the `NO_COLOR` environment variable is set.
 
 | Column | Description |
 |--------|-------------|
@@ -122,9 +143,24 @@ o03.cc                         ✗          1624ms       88天         无      
 ### Single Domain Check
 
 ```bash
-# Full check on a single domain:
+# Full check on a single domain (TLS + all detectors):
 ./RealiTLScanner check example.com
+
+# Custom port, timeout, data dir:
+./RealiTLScanner check example.com -port 443 -timeout 5 -data-dir /opt/realitls
+
+# Continue even if data file download fails:
+./RealiTLScanner check example.com -skip-download
 ```
+
+`check` returns a non-zero exit code on failure, suitable for shell scripting:
+
+| Exit | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | Missing domain argument or DNS resolution failure |
+| 2 | TLS scan error (dial/handshake failed, cert missing) |
+| 3 | Data file download failure (use `-skip-download` to soften) |
 
 ### Version
 
@@ -163,15 +199,16 @@ Required data files are **automatically downloaded** on first run:
 ## Project Structure
 
 ```
-cmd/realitlscanner/     CLI entry point (subcommand routing)
+cmd/realitlscanner/     CLI entry point (subcommand routing, url-fetch with timeout/size cap)
 internal/
-  types/                Shared types (Host, ScanResult)
-  scanner/              TLS scanning + CSV domain parser
-  detector/             Detector interface + implementations + scorer
-  pipeline/             Channel-based scan→detect→output orchestration
-  output/               Output writers (CSV, JSON, table) + progress
-  data/                 Data file management (embed + download)
-  geo/                  GeoIP lookup
+  types/                Shared types (Host, ScanResult, TLSInfo, CertValidResult)
+  scanner/              TLS scanning (ctx-aware) + CSV domain parser + StrictDomainName validator
+  detector/             Detector interface + CDN/GFW/HotSite/Location/Redirect/Status/TLSCheck + scorer
+                        + safe-target gate (loopback/private/metadata rejection)
+  pipeline/             Channel-based scan→detect→output orchestration with attempted/failed/dropped stats
+  output/               Output writers (CSV, JSON, JSONL, table)
+  data/                 Data file management (embed + downloaded with singleflight + size cap)
+  geo/                  GeoIP lookup (path-configurable)
 ```
 
 ## Testing
@@ -181,6 +218,13 @@ make test
 # or
 go test -race ./...
 ```
+
+## Security Notes
+
+- **Scanner uses `InsecureSkipVerify=true`**: by design — the goal is to discover Reality-feasible servers, not to validate PKI. `CertValidResult.Valid` reflects basic feasibility (TLS 1.3 + h2 ALPN + non-empty CertDomain/Issuer); `CertValidResult.SNIMatch` uses `x509.VerifyHostname` (handles wildcards). Consumers needing true validation must verify independently.
+- **Redirect/Status detectors**: HTTP probes only run against publicly routable domains. Loopback, link-local (`127.0.0.0/8`, `::1`, `169.254.0.0/16`), private (`10/8`, `172.16/12`, `192.168/16`, ULA), and cloud metadata (`169.254.169.254`, etc.) addresses are rejected client-side before any request is sent.
+- **Data downloads**: capped at 200 MiB (`Content-Length` pre-check + `LimitReader`); singleflight prevents duplicate concurrent downloads.
+- **Proxy hygiene**: all upper- and lower-case proxy env vars (`HTTP_PROXY`/`http_proxy`/...) are cleared at startup for all subcommands.
 
 ## Acknowledgements
 

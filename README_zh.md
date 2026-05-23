@@ -6,14 +6,16 @@
 
 ## 功能特性
 
-- TLS 证书扫描（IP、CIDR、域名）
+- TLS 证书扫描（IP、CIDR、域名），支持 context 取消
 - 可配置并发数的高速扫描
-- GeoIP 地理位置查询
-- **域名可用性检测**：CDN、GFW、TLS 验证、热门网站、重定向、HTTP 状态
+- GeoIP 地理位置查询（数据目录可配置）
+- **域名可用性检测**：CDN、GFW、TLS 验证（SAN 优先 + 通配符 `VerifyHostname`）、热门网站、重定向、HTTP 状态
+- **SSRF 安全防护**：redirect/status 探测器拒绝 loopback / private / link-local / 云元数据地址
 - **星级评分**（0-5 星）：综合握手时间、CDN、热门度、证书有效期
-- **格式化彩色表格输出**
-- **实时进度显示**
+- **格式化彩色表格输出**（非 TTY 或 `NO_COLOR` 自动关闭着色）
+- **扫描统计**：summary 输出 `attempted / tls_failed / dropped` 计数
 - **优雅中断**：scan 模式下按 Ctrl+C 可中断扫描阶段，立即使用已收集的域名进行检测
+- **并发安全的数据管理**：`singleflight` 去重下载 + 大小限制（默认 200 MiB）
 - Docker 支持
 
 ## 编译
@@ -24,19 +26,22 @@
 make build
 # 或
 go build -o RealiTLScanner ./cmd/realitlscanner
+
+# 去除调试信息的可复现构建：
+go build -trimpath -ldflags='-s -w' -o RealiTLScanner ./cmd/realitlscanner
 ```
 
 ### 交叉编译
 
 ```bash
 # Linux x86_64
-GOOS=linux GOARCH=amd64 go build -o RealiTLScanner ./cmd/realitlscanner
+GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o RealiTLScanner-linux-amd64 ./cmd/realitlscanner
 
 # Linux ARM64
-GOOS=linux GOARCH=arm64 go build -o RealiTLScanner ./cmd/realitlscanner
+GOOS=linux GOARCH=arm64 go build -trimpath -ldflags='-s -w' -o RealiTLScanner-linux-arm64 ./cmd/realitlscanner
 
 # Windows
-GOOS=windows GOARCH=amd64 go build -o RealiTLScanner.exe ./cmd/realitlscanner
+GOOS=windows GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o RealiTLScanner-windows-amd64.exe ./cmd/realitlscanner
 ```
 
 ## 使用方法
@@ -96,18 +101,21 @@ GOOS=windows GOARCH=amd64 go build -o RealiTLScanner.exe ./cmd/realitlscanner
 #### 输出示例
 
 ```
-------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------
 最终域名                           基础条件     握手时间       证书时间       CDN      热门     推荐     页面状态
-------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------
 yz.iosjy.top                   ✓          341ms        69天         无       -      ****     200
 blog.bingserve.xyz             ✓          447ms        83天         无       -      ****     200
 yingyaozw.com                  ✓          439ms        246天        无       -      ****     200
 code.memoncler.com             ✓          783ms        5天          无       -      ***      -
 o03.cc                         ✗          1624ms       88天         无       -      ***      405
 
-------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------
 检测完成: 31 个域名, 29 个适合 (93.5%), 耗时 12.9s
+扫描统计: attempted=256  tls_failed=210  dropped=15
 ```
+
+当输出被重定向到文件 / 管道（非 TTY）或环境变量 `NO_COLOR` 已设置时，颜色输出自动关闭。
 
 | 列名 | 说明 |
 |------|------|
@@ -129,6 +137,28 @@ o03.cc                         ✗          1624ms       88天         无      
 | 未检测到 CDN | +1 |
 | 非热门网站 | +1 |
 | 证书有效期 ≥ 60 天 | +1 |
+
+### 单域名检测（`check` 命令）
+
+```bash
+# 对单个域名做完整检测（TLS + 所有检测器）：
+./RealiTLScanner check example.com
+
+# 自定义端口 / 超时 / 数据目录：
+./RealiTLScanner check example.com -port 443 -timeout 5 -data-dir /opt/realitls
+
+# 数据文件下载失败时继续：
+./RealiTLScanner check example.com -skip-download
+```
+
+`check` 失败时返回非零 exit code，便于脚本判断：
+
+| Exit | 含义 |
+|------|------|
+| 0 | 成功 |
+| 1 | 未提供 domain 参数或 DNS 解析失败 |
+| 2 | TLS 扫描失败（dial / handshake / 无证书） |
+| 3 | 数据文件下载失败（可加 `-skip-download` 容忍） |
 
 ### 版本信息
 
@@ -167,15 +197,16 @@ docker run --rm realitlscanner scan apple.com www.tesla.com
 ## 项目结构
 
 ```
-cmd/realitlscanner/     CLI 入口（子命令路由）
+cmd/realitlscanner/     CLI 入口（子命令路由 + url-fetch 超时/大小限制）
 internal/
-  types/                共享类型（Host、ScanResult）
-  scanner/              TLS 扫描 + CSV 域名解析
-  detector/             检测器接口 + 实现 + 评分器
-  pipeline/             基于 Channel 的 扫描→检测→输出 流水线
-  output/               输出器（CSV、JSON、表格）+ 进度显示
-  data/                 资源文件管理（嵌入 + 下载）
-  geo/                  GeoIP 查询
+  types/                共享类型（Host、ScanResult、TLSInfo、CertValidResult）
+  scanner/              TLS 扫描（ctx-aware）+ CSV 域名解析 + StrictDomainName 校验
+  detector/             检测器接口 + CDN/GFW/HotSite/Location/Redirect/Status/TLSCheck + 评分
+                        + 安全目标网关（拒绝 loopback / private / 元数据地址）
+  pipeline/             基于 Channel 的 扫描→检测→输出 流水线，带 attempted/tls_failed/dropped 统计
+  output/               输出器（CSV、JSON、JSONL、表格）
+  data/                 资源文件管理（嵌入 + singleflight 去重下载 + 大小限制）
+  geo/                  GeoIP 查询（路径可配置）
 ```
 
 ## 测试
@@ -185,6 +216,13 @@ make test
 # 或
 go test -race ./...
 ```
+
+## 安全说明
+
+- **扫描器使用 `InsecureSkipVerify=true`**：这是有意的设计 — 目标是发现 Reality 可用服务器，而非验证 PKI。`CertValidResult.Valid` 仅反映基础可行性（TLS 1.3 + h2 ALPN + 非空 CertDomain/Issuer）；`CertValidResult.SNIMatch` 使用 `x509.VerifyHostname`（支持通配符）。需要真正验证的下游必须自行 verify 链。
+- **Redirect / Status 检测器**：HTTP 探测仅对公网可路由域名运行。Loopback、link-local（`127.0.0.0/8`、`::1`、`169.254.0.0/16`）、私网（`10/8`、`172.16/12`、`192.168/16`、ULA）、云元数据（`169.254.169.254` 等）地址在发请求前即被拒绝。
+- **数据下载**：限制 200 MiB（先校验 `Content-Length`，再 `LimitReader` 兜底）；`singleflight` 避免并发重复下载。
+- **代理清理**：所有子命令启动时清空 upper/lower-case 代理环境变量（`HTTP_PROXY` / `http_proxy` / ...）。
 
 ## 致谢
 
