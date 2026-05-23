@@ -24,16 +24,22 @@ import (
 
 func generateTestCert(t *testing.T) tls.Certificate {
 	t.Helper()
+	return generateTestCertWithSAN(t, "localhost", nil)
+}
+
+func generateTestCertWithSAN(t *testing.T, cn string, dnsNames []string) tls.Certificate {
+	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: "localhost", Organization: []string{"Test Org"}},
+		Subject:      pkix.Name{CommonName: cn, Organization: []string{"Test Org"}},
 		NotBefore:    time.Now(),
 		NotAfter:     time.Now().Add(time.Hour),
 		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
+		DNSNames:     dnsNames,
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 	}
 	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
@@ -53,9 +59,8 @@ func generateTestCert(t *testing.T) tls.Certificate {
 	return cert
 }
 
-func startTestTLSServer(t *testing.T) (string, func()) {
+func startTestTLSServerWithCert(t *testing.T, cert tls.Certificate) (string, func()) {
 	t.Helper()
-	cert := generateTestCert(t)
 	tlsCfg := &tls.Config{
 		Certificates: []tls.Certificate{cert},
 		NextProtos:   []string{"h2", "http/1.1"},
@@ -77,6 +82,11 @@ func startTestTLSServer(t *testing.T) (string, func()) {
 		}
 	}()
 	return ln.Addr().String(), func() { ln.Close() }
+}
+
+func startTestTLSServer(t *testing.T) (string, func()) {
+	t.Helper()
+	return startTestTLSServerWithCert(t, generateTestCert(t))
 }
 
 func TestScanTLS_LocalServer(t *testing.T) {
@@ -117,6 +127,59 @@ func TestScanTLS_LocalServer(t *testing.T) {
 	}
 	if result.TLS.ALPN != "h2" {
 		t.Errorf("expected h2 ALPN, got %s", result.TLS.ALPN)
+	}
+}
+
+func portFromAddr(t *testing.T, addr string) int {
+	t.Helper()
+	_, portStr, _ := net.SplitHostPort(addr)
+	port := 0
+	for _, c := range portStr {
+		port = port*10 + int(c-'0')
+	}
+	return port
+}
+
+func TestScanTLS_PrefersSANOverCN(t *testing.T) {
+	cert := generateTestCertWithSAN(t, "placeholder-cn", []string{"primary.example", "alt.example"})
+	addr, cleanup := startTestTLSServerWithCert(t, cert)
+	defer cleanup()
+
+	cfg := ScanConfig{Port: portFromAddr(t, addr), Timeout: 5 * time.Second}
+	h := types.Host{IP: net.ParseIP("127.0.0.1"), Origin: "127.0.0.1", Type: types.HostTypeIP}
+
+	result := ScanTLS(context.Background(), h, cfg, &geo.Geo{})
+
+	if result.Error != "" {
+		t.Fatalf("unexpected error: %s", result.Error)
+	}
+	if result.TLS == nil {
+		t.Fatal("expected TLS info")
+	}
+	if result.TLS.CertDomain != "primary.example" {
+		t.Errorf("CertDomain: got %q, want %q (first SAN)", result.TLS.CertDomain, "primary.example")
+	}
+}
+
+func TestScanTLS_WildcardSANMatch(t *testing.T) {
+	cert := generateTestCertWithSAN(t, "", []string{"*.wild.example"})
+	addr, cleanup := startTestTLSServerWithCert(t, cert)
+	defer cleanup()
+
+	cfg := ScanConfig{Port: portFromAddr(t, addr), Timeout: 5 * time.Second}
+	h := types.Host{
+		IP:     net.ParseIP("127.0.0.1"),
+		Origin: "api.wild.example",
+		Type:   types.HostTypeDomain,
+	}
+
+	result := ScanTLS(context.Background(), h, cfg, &geo.Geo{})
+
+	if result.Error != "" {
+		t.Fatalf("unexpected error: %s", result.Error)
+	}
+	if result.CertValid == nil || result.CertValid.SNIMatch == nil || !*result.CertValid.SNIMatch {
+		t.Errorf("wildcard SAN should match api.wild.example; CertValid=%+v", result.CertValid)
 	}
 }
 

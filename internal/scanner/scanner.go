@@ -3,6 +3,7 @@ package scanner
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"log/slog"
 	"net"
 	"strconv"
@@ -87,9 +88,10 @@ func ScanTLS(ctx context.Context, host types.Host, cfg ScanConfig, geoReader *ge
 		result.Error = "no peer cert"
 		return result
 	}
-	domain := state.PeerCertificates[0].Subject.CommonName
-	issuers := strings.Join(state.PeerCertificates[0].Issuer.Organization, " | ")
-	certExpiry := state.PeerCertificates[0].NotAfter
+	leaf := state.PeerCertificates[0]
+	domain := pickCertDomain(leaf)
+	issuers := strings.Join(leaf.Issuer.Organization, " | ")
+	certExpiry := leaf.NotAfter
 
 	result.TLS = &types.TLSInfo{
 		Version:       state.Version,
@@ -98,6 +100,10 @@ func ScanTLS(ctx context.Context, host types.Host, cfg ScanConfig, geoReader *ge
 		CertIssuer:    issuers,
 		HandshakeTime: hsTime,
 		CertExpiry:    certExpiry,
+	}
+	if host.Type == types.HostTypeDomain {
+		match := leaf.VerifyHostname(host.Origin) == nil
+		result.CertValid = &types.CertValidResult{SNIMatch: &match}
 	}
 	result.GeoCode = geoReader.GetGeo(host.IP)
 
@@ -115,4 +121,18 @@ func ScanTLS(ctx context.Context, host types.Host, cfg ScanConfig, geoReader *ge
 		"cert-domain", domain, "cert-issuer", issuers, "geo", result.GeoCode)
 
 	return result
+}
+
+// pickCertDomain prefers the first DNS SAN (modern certs may omit CN entirely
+// or carry only a placeholder there); falls back to CN. Returned value is
+// lowercased and stripped of a trailing dot so equality checks are stable.
+func pickCertDomain(leaf *x509.Certificate) string {
+	d := ""
+	if len(leaf.DNSNames) > 0 {
+		d = leaf.DNSNames[0]
+	} else {
+		d = leaf.Subject.CommonName
+	}
+	d = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(d)), ".")
+	return d
 }

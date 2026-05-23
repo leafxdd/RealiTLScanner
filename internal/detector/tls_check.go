@@ -3,6 +3,7 @@ package detector
 import (
 	"context"
 	"crypto/tls"
+	"strings"
 
 	"github.com/xtls/RealiTLScanner/internal/types"
 )
@@ -24,9 +25,13 @@ func (d *TLSCheckDetector) Detect(_ context.Context, result *types.ScanResult) e
 		result.TLS.CertDomain != "" &&
 		result.TLS.CertIssuer != ""
 
-	cv := &types.CertValidResult{Valid: valid}
-	if result.Host.Type == types.HostTypeDomain {
-		match := result.Host.Origin == result.TLS.CertDomain
+	cv := result.CertValid
+	if cv == nil {
+		cv = &types.CertValidResult{}
+	}
+	cv.Valid = valid
+	if cv.SNIMatch == nil && result.Host.Type == types.HostTypeDomain {
+		match := strings.EqualFold(result.Host.Origin, result.TLS.CertDomain)
 		cv.SNIMatch = &match
 	}
 	result.CertValid = cv
