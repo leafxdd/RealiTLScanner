@@ -351,7 +351,12 @@ func runScan(args []string) {
 				unsuitable++
 			}
 		}
-		table.WriteSummary(suitable, unsuitable, time.Since(t))
+		sps := sp.Stats()
+		table.WriteSummaryWithStats(suitable, unsuitable, time.Since(t), output.SummaryStats{
+			Attempted: sps.Attempted,
+			TLSFailed: sps.TLSFailed,
+			Dropped:   sps.Dropped,
+		})
 		return
 	}
 
@@ -388,7 +393,12 @@ func runScan(args []string) {
 			unsuitable++
 		}
 	}
-	table.WriteSummary(suitable, unsuitable, time.Since(t))
+	pStats := p.Stats()
+	table.WriteSummaryWithStats(suitable, unsuitable, time.Since(t), output.SummaryStats{
+		Attempted: pStats.Attempted,
+		TLSFailed: pStats.TLSFailed,
+		Dropped:   pStats.Dropped,
+	})
 }
 
 func buildDetectors(dm *data.DataManager, geoReader *geo.Geo, filter string) []detector.Detector {

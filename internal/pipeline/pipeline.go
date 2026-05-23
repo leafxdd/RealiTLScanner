@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 
 	"github.com/xtls/RealiTLScanner/internal/detector"
 	"github.com/xtls/RealiTLScanner/internal/geo"
@@ -27,10 +28,19 @@ type Config struct {
 	PassAll       bool // send all TLS-connected results, not just feasible
 }
 
+type Stats struct {
+	Attempted int64
+	TLSFailed int64
+	Dropped   int64
+}
+
 type Pipeline struct {
 	cfg       Config
 	geo       *geo.Geo
 	runner    *detector.Runner
+	attempted atomic.Int64
+	tlsFailed atomic.Int64
+	dropped   atomic.Int64
 }
 
 func New(cfg Config, g *geo.Geo, runner *detector.Runner) *Pipeline {
@@ -41,6 +51,15 @@ func New(cfg Config, g *geo.Geo, runner *detector.Runner) *Pipeline {
 		cfg.DetectWorkers = 2
 	}
 	return &Pipeline{cfg: cfg, geo: g, runner: runner}
+}
+
+// Stats returns counters snapshotted at call time; safe to call any time.
+func (p *Pipeline) Stats() Stats {
+	return Stats{
+		Attempted: p.attempted.Load(),
+		TLSFailed: p.tlsFailed.Load(),
+		Dropped:   p.dropped.Load(),
+	}
 }
 
 func (p *Pipeline) Run(ctx context.Context, hosts <-chan types.Host) (<-chan *types.ScanResult, error) {
@@ -59,9 +78,13 @@ func (p *Pipeline) Run(ctx context.Context, hosts <-chan types.Host) (<-chan *ty
 					return
 				default:
 				}
+				p.attempted.Add(1)
 				result := scanner.ScanTLS(ctx, host, p.cfg.ScanConfig, p.geo)
 				if p.cfg.OnScan != nil {
 					p.cfg.OnScan()
+				}
+				if result.TLS == nil {
+					p.tlsFailed.Add(1)
 				}
 				if result.Feasible || (p.cfg.PassAll && result.TLS != nil) {
 					select {
@@ -69,6 +92,8 @@ func (p *Pipeline) Run(ctx context.Context, hosts <-chan types.Host) (<-chan *ty
 					case <-ctx.Done():
 						return
 					}
+				} else {
+					p.dropped.Add(1)
 				}
 			}
 		}()

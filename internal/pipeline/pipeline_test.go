@@ -76,6 +76,44 @@ func TestPipeline_NoDetector(t *testing.T) {
 	}
 }
 
+func TestPipeline_StatsCountsFailedScans(t *testing.T) {
+	cfg := Config{
+		ScanWorkers: 2,
+		Mode:        ModeStream,
+		ScanConfig: scanner.ScanConfig{
+			Port:    1, // unreachable — all dials fail
+			Timeout: 100 * time.Millisecond,
+		},
+	}
+	g := &geo.Geo{}
+	p := New(cfg, g, nil)
+
+	hosts := make(chan types.Host, 6)
+	for i := 0; i < 6; i++ {
+		hosts <- types.Host{IP: nil, Origin: "127.0.0.1", Type: types.HostTypeIP}
+	}
+	close(hosts)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := p.Run(ctx, hosts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range out {
+	}
+	s := p.Stats()
+	if s.Attempted != 6 {
+		t.Errorf("Attempted: got %d, want 6", s.Attempted)
+	}
+	if s.TLSFailed != 6 {
+		t.Errorf("TLSFailed: got %d, want 6", s.TLSFailed)
+	}
+	if s.Dropped != 6 {
+		t.Errorf("Dropped: got %d, want 6", s.Dropped)
+	}
+}
+
 // TestPipeline_NoGoroutineLeakOnCtxCancel — abandon the output channel,
 // cancel ctx, ensure worker goroutines do not leak waiting on send.
 func TestPipeline_NoGoroutineLeakOnCtxCancel(t *testing.T) {

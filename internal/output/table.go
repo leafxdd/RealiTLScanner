@@ -131,7 +131,19 @@ func (tw *TableWriter) WriteResult(result *types.ScanResult) {
 	}
 }
 
+// SummaryStats are optional counters surfaced in WriteSummary; pass zero
+// values if not applicable.
+type SummaryStats struct {
+	Attempted int64
+	TLSFailed int64
+	Dropped   int64
+}
+
 func (tw *TableWriter) WriteSummary(suitable, unsuitable int, elapsed time.Duration) {
+	tw.WriteSummaryWithStats(suitable, unsuitable, elapsed, SummaryStats{})
+}
+
+func (tw *TableWriter) WriteSummaryWithStats(suitable, unsuitable int, elapsed time.Duration, stats SummaryStats) {
 	tw.mu.Lock()
 	defer tw.mu.Unlock()
 
@@ -144,6 +156,10 @@ func (tw *TableWriter) WriteSummary(suitable, unsuitable int, elapsed time.Durat
 
 	summary := fmt.Sprintf("\n%s\n检测完成: %d 个域名, %d 个适合 (%.1f%%), 耗时 %.1fs\n",
 		sep, total, suitable, pct, elapsed.Seconds())
+	if stats.Attempted > 0 {
+		summary += fmt.Sprintf("扫描统计: attempted=%d  tls_failed=%d  dropped=%d\n",
+			stats.Attempted, stats.TLSFailed, stats.Dropped)
+	}
 
 	fmt.Fprint(tw.termW, summary)
 	if tw.fileW != nil {
