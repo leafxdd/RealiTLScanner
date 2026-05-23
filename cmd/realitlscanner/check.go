@@ -17,7 +17,7 @@ import (
 	"github.com/xtls/RealiTLScanner/internal/types"
 )
 
-func runCheck(args []string) {
+func runCheck(args []string) int {
 	fs := flag.NewFlagSet("check", flag.ExitOnError)
 	var (
 		port         int
@@ -37,14 +37,14 @@ func runCheck(args []string) {
 
 	if fs.NArg() < 1 {
 		fmt.Fprintln(os.Stderr, "Usage: realitlscanner check <domain> [flags]")
-		return
+		return 1
 	}
 	domain := fs.Arg(0)
 
 	ip, err := scanner.LookupIP(domain, false)
 	if err != nil {
 		slog.Error("Failed to resolve domain", "domain", domain, "err", err)
-		return
+		return 1
 	}
 
 	host := types.Host{
@@ -62,7 +62,7 @@ func runCheck(args []string) {
 			slog.Warn("Data file download failed, continuing with limited detection", "err", err)
 		} else {
 			slog.Error("Data file download failed (use -skip-download to continue anyway)", "err", err)
-			return
+			return 3
 		}
 	}
 
@@ -78,7 +78,7 @@ func runCheck(args []string) {
 	result := scanner.ScanTLS(ctx, host, cfg, geoReader)
 	if result.Error != "" {
 		fmt.Printf("Error: %s\n", result.Error)
-		return
+		return 2
 	}
 
 	fmt.Printf("=== Check: %s (%s:%d) ===\n", domain, ip.String(), port)
@@ -119,5 +119,6 @@ func runCheck(args []string) {
 		}
 		fmt.Println()
 	}
+	return 0
 }
 

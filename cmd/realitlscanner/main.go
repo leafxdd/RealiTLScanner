@@ -24,22 +24,24 @@ var version = "2.0.0-dev"
 
 func main() {
 	if len(os.Args) > 1 && !strings.HasPrefix(os.Args[1], "-") {
-		routeSubcommand(os.Args[1], os.Args[2:])
-		return
+		os.Exit(routeSubcommand(os.Args[1], os.Args[2:]))
 	}
 	runLegacy(os.Args[1:])
 }
 
-func routeSubcommand(cmd string, args []string) {
+func routeSubcommand(cmd string, args []string) int {
 	switch cmd {
 	case "scan":
 		runScan(args)
+		return 0
 	case "check":
-		runCheck(args)
+		return runCheck(args)
 	case "version":
 		printVersion()
+		return 0
 	default:
 		runLegacy(os.Args[1:])
+		return 0
 	}
 }
 
