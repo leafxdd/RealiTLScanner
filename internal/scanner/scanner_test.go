@@ -120,6 +120,62 @@ func TestScanTLS_LocalServer(t *testing.T) {
 	}
 }
 
+func TestScanTLS_RespectsContextCancel(t *testing.T) {
+	// Server that accepts TCP but never sends TLS handshake — forces client to hang.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				<-done
+				c.Close()
+			}(c)
+		}
+	}()
+
+	host, portStr, _ := net.SplitHostPort(ln.Addr().String())
+	port := 0
+	for _, ch := range portStr {
+		port = port*10 + int(ch-'0')
+	}
+
+	cfg := ScanConfig{
+		Port:    port,
+		Timeout: 30 * time.Second, // long timeout — cancel must win
+	}
+	h := types.Host{
+		IP:     net.ParseIP(host),
+		Origin: host,
+		Type:   types.HostTypeIP,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	start := time.Now()
+	result := ScanTLS(ctx, h, cfg, &geo.Geo{})
+	elapsed := time.Since(start)
+
+	if elapsed > 500*time.Millisecond {
+		t.Errorf("ScanTLS did not return promptly after ctx cancel: %v", elapsed)
+	}
+	if result.Error != "cancelled" {
+		t.Errorf("expected error 'cancelled', got %q", result.Error)
+	}
+}
+
 func TestValidateDomainName(t *testing.T) {
 	tests := []struct {
 		domain string

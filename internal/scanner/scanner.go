@@ -38,10 +38,15 @@ func ScanTLS(ctx context.Context, host types.Host, cfg ScanConfig, geoReader *ge
 	result.IP = host.IP
 
 	hostPort := net.JoinHostPort(host.IP.String(), strconv.Itoa(cfg.Port))
-	conn, err := net.DialTimeout("tcp", hostPort, cfg.Timeout)
+	dialer := &net.Dialer{Timeout: cfg.Timeout}
+	conn, err := dialer.DialContext(ctx, "tcp", hostPort)
 	if err != nil {
-		slog.Debug("Cannot dial", "target", hostPort)
-		result.Error = "dial failed"
+		if ctx.Err() != nil {
+			result.Error = "cancelled"
+		} else {
+			result.Error = "dial failed"
+		}
+		slog.Debug("Cannot dial", "target", hostPort, "err", err)
 		return result
 	}
 	defer conn.Close()
@@ -64,11 +69,15 @@ func ScanTLS(ctx context.Context, host types.Host, cfg ScanConfig, geoReader *ge
 
 	c := tls.Client(conn, tlsCfg)
 	hsStart := time.Now()
-	err = c.Handshake()
+	err = c.HandshakeContext(ctx)
 	hsTime := time.Since(hsStart)
 	if err != nil {
-		slog.Debug("TLS handshake failed", "target", hostPort)
-		result.Error = "handshake failed"
+		if ctx.Err() != nil {
+			result.Error = "cancelled"
+		} else {
+			result.Error = "handshake failed"
+		}
+		slog.Debug("TLS handshake failed", "target", hostPort, "err", err)
 		return result
 	}
 
