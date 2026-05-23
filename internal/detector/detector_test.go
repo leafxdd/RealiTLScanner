@@ -45,7 +45,7 @@ func TestGFWDetector_Unavailable(t *testing.T) {
 func TestTLSCheckDetector(t *testing.T) {
 	d := NewTLSCheckDetector()
 	result := &types.ScanResult{
-		Host: types.Host{Origin: "example.com"},
+		Host: types.Host{Origin: "example.com", Type: types.HostTypeDomain},
 		TLS: &types.TLSInfo{
 			Version:    0x0304, // TLS 1.3
 			ALPN:       "h2",
@@ -63,8 +63,58 @@ func TestTLSCheckDetector(t *testing.T) {
 	if !result.CertValid.Valid {
 		t.Error("expected valid TLS config")
 	}
-	if !result.CertValid.SNIMatch {
+	if result.CertValid.SNIMatch == nil {
+		t.Fatal("expected SNIMatch to be set for domain scan")
+	}
+	if !*result.CertValid.SNIMatch {
 		t.Error("expected SNI match")
+	}
+}
+
+func TestTLSCheckDetector_IPScan_SNIMatchIsNil(t *testing.T) {
+	d := NewTLSCheckDetector()
+	result := &types.ScanResult{
+		Host: types.Host{Origin: "1.2.3.4", Type: types.HostTypeIP},
+		TLS: &types.TLSInfo{
+			Version:    0x0304,
+			ALPN:       "h2",
+			CertDomain: "example.com",
+			CertIssuer: "Let's Encrypt",
+		},
+	}
+	if err := d.Detect(context.Background(), result); err != nil {
+		t.Fatal(err)
+	}
+	if result.CertValid == nil {
+		t.Fatal("expected CertValid to be set")
+	}
+	if result.CertValid.SNIMatch != nil {
+		t.Errorf("expected SNIMatch nil for IP scan, got %v", *result.CertValid.SNIMatch)
+	}
+}
+
+func TestTLSCheckDetector_DomainScan_MismatchingSNI(t *testing.T) {
+	d := NewTLSCheckDetector()
+	result := &types.ScanResult{
+		Host: types.Host{Origin: "example.com", Type: types.HostTypeDomain},
+		TLS: &types.TLSInfo{
+			Version:    0x0304,
+			ALPN:       "h2",
+			CertDomain: "other.example.org",
+			CertIssuer: "Let's Encrypt",
+		},
+	}
+	if err := d.Detect(context.Background(), result); err != nil {
+		t.Fatal(err)
+	}
+	if result.CertValid == nil {
+		t.Fatal("expected CertValid to be set")
+	}
+	if result.CertValid.SNIMatch == nil {
+		t.Fatal("expected SNIMatch set (not nil) for domain scan")
+	}
+	if *result.CertValid.SNIMatch {
+		t.Error("expected SNIMatch false when cert domain differs from origin")
 	}
 }
 

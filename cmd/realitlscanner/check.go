@@ -108,7 +108,11 @@ func runCheck(args []string) {
 		fmt.Println()
 	}
 	if result.CertValid != nil {
-		fmt.Printf("Cert Valid:   %v (SNI match: %v)\n", result.CertValid.Valid, result.CertValid.SNIMatch)
+		sniDisplay := "N/A"
+		if result.CertValid.SNIMatch != nil {
+			sniDisplay = fmt.Sprintf("%v", *result.CertValid.SNIMatch)
+		}
+		fmt.Printf("Cert Valid:   %v (SNI match: %s)\n", result.CertValid.Valid, sniDisplay)
 	}
 	if result.Redirect != nil {
 		fmt.Printf("Redirect:     %v", result.Redirect.Redirects)

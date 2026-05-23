@@ -13,9 +13,12 @@ func ComputeScore(result *types.ScanResult) int {
 		return 0
 	}
 
-	// TLS 1.3 + H2 + valid cert + SNI match
-	if result.CertValid != nil && result.CertValid.Valid && result.CertValid.SNIMatch {
-		score++
+	// TLS 1.3 + H2 + valid cert + SNI match (or N/A for IP scans)
+	if result.CertValid != nil && result.CertValid.Valid {
+		sniOK := result.CertValid.SNIMatch == nil || *result.CertValid.SNIMatch
+		if sniOK {
+			score++
+		}
 	} else if result.TLS.Version >= tls.VersionTLS13 && result.TLS.ALPN == "h2" &&
 		result.TLS.CertDomain != "" && result.TLS.CertIssuer != "" {
 		score++

@@ -24,11 +24,11 @@ func (d *TLSCheckDetector) Detect(_ context.Context, result *types.ScanResult) e
 		result.TLS.CertDomain != "" &&
 		result.TLS.CertIssuer != ""
 
-	sniMatch := result.Host.Origin == result.TLS.CertDomain
-
-	result.CertValid = &types.CertValidResult{
-		Valid:    valid,
-		SNIMatch: sniMatch,
+	cv := &types.CertValidResult{Valid: valid}
+	if result.Host.Type == types.HostTypeDomain {
+		match := result.Host.Origin == result.TLS.CertDomain
+		cv.SNIMatch = &match
 	}
+	result.CertValid = cv
 	return nil
 }

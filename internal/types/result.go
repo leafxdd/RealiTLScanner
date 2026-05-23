@@ -38,7 +38,7 @@ type HotSiteResult struct {
 
 type CertValidResult struct {
 	Valid     bool      `json:"valid"`
-	SNIMatch  bool     `json:"sni_match"`
+	SNIMatch  *bool     `json:"sni_match,omitempty"`
 	ExpiresAt time.Time `json:"expires_at,omitempty"`
 }
 
