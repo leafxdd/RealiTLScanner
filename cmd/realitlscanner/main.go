@@ -6,10 +6,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net/http"
 	"os"
 	"os/signal"
-	"regexp"
 	"strings"
 	"time"
 
@@ -442,23 +440,11 @@ func resolveHosts(ctx context.Context, addr, in, url string, enableIPv6, infinit
 	}
 	if url != "" {
 		slog.Info("Fetching url...")
-		resp, err := http.Get(url)
+		domains, err := fetchURLDomains(ctx, url, urlFetchTimeout, urlMaxBytes)
 		if err != nil {
 			slog.Error("Error fetching url", "err", err)
 			return nil
 		}
-		defer resp.Body.Close()
-		v, err := io.ReadAll(resp.Body)
-		if err != nil {
-			slog.Error("Error reading body", "err", err)
-			return nil
-		}
-		arr := regexp.MustCompile(`(http|https)://(.*?)[/"<>\s]+`).FindAllStringSubmatch(string(v), -1)
-		var domains []string
-		for _, m := range arr {
-			domains = append(domains, m[2])
-		}
-		domains = scanner.RemoveDuplicateStr(domains)
 		slog.Info("Parsed domains", "count", len(domains))
 		return scanner.IterateCtx(ctx, strings.NewReader(strings.Join(domains, "\n")), enableIPv6)
 	}
