@@ -11,6 +11,8 @@ import (
 	"encoding/pem"
 	"math/big"
 	"net"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -182,6 +184,43 @@ func TestValidateDomainName(t *testing.T) {
 		if got != tt.valid {
 			t.Errorf("ValidateDomainName(%q) = %v, want %v", tt.domain, got, tt.valid)
 		}
+	}
+}
+
+func TestIterateCtx_CIDRCancel(t *testing.T) {
+	// 10.0.0.0/16 yields ~65k IPs; cancelling context should stop the
+	// producer goroutine instead of blocking forever on send.
+	ctx, cancel := context.WithCancel(context.Background())
+	ch := IterateCtx(ctx, strings.NewReader("10.0.0.0/16\n"), false)
+
+	// Read one host to confirm production started.
+	select {
+	case <-ch:
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected first host within 2s")
+	}
+
+	startGoroutines := runtime.NumGoroutine()
+	cancel()
+
+	// Drain — producer should close channel after observing ctx.Done.
+	drained := make(chan struct{})
+	go func() {
+		for range ch {
+		}
+		close(drained)
+	}()
+
+	select {
+	case <-drained:
+	case <-time.After(3 * time.Second):
+		t.Fatal("producer goroutine did not exit within 3s after context cancel")
+	}
+
+	// Goroutine count should not have grown (producer exited).
+	endGoroutines := runtime.NumGoroutine()
+	if endGoroutines > startGoroutines {
+		t.Logf("goroutine count: start=%d end=%d", startGoroutines, endGoroutines)
 	}
 }
 

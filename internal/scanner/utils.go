@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -17,10 +18,22 @@ import (
 )
 
 func Iterate(reader io.Reader, enableIPv6 bool) <-chan types.Host {
+	return IterateCtx(context.Background(), reader, enableIPv6)
+}
+
+func IterateCtx(ctx context.Context, reader io.Reader, enableIPv6 bool) <-chan types.Host {
 	s := bufio.NewScanner(reader)
 	hostChan := make(chan types.Host)
 	go func() {
 		defer close(hostChan)
+		send := func(h types.Host) bool {
+			select {
+			case <-ctx.Done():
+				return false
+			case hostChan <- h:
+				return true
+			}
+		}
 		for s.Scan() {
 			line := strings.TrimSpace(s.Text())
 			if line == "" {
@@ -28,10 +41,8 @@ func Iterate(reader io.Reader, enableIPv6 bool) <-chan types.Host {
 			}
 			ip := net.ParseIP(line)
 			if ip != nil && (ip.To4() != nil || enableIPv6) {
-				hostChan <- types.Host{
-					IP:     ip,
-					Origin: line,
-					Type:   types.HostTypeIP,
+				if !send(types.Host{IP: ip, Origin: line, Type: types.HostTypeIP}) {
+					return
 				}
 				continue
 			}
@@ -47,16 +58,11 @@ func Iterate(reader io.Reader, enableIPv6 bool) <-chan types.Host {
 				}
 				p = p.Masked()
 				addr := p.Addr()
-				for {
-					if !p.Contains(addr) {
-						break
-					}
+				for p.Contains(addr) {
 					ip = net.ParseIP(addr.String())
 					if ip != nil {
-						hostChan <- types.Host{
-							IP:     ip,
-							Origin: line,
-							Type:   types.HostTypeCIDR,
+						if !send(types.Host{IP: ip, Origin: line, Type: types.HostTypeCIDR}) {
+							return
 						}
 					}
 					addr = addr.Next()
@@ -64,10 +70,8 @@ func Iterate(reader io.Reader, enableIPv6 bool) <-chan types.Host {
 				continue
 			}
 			if ValidateDomainName(line) {
-				hostChan <- types.Host{
-					IP:     nil,
-					Origin: line,
-					Type:   types.HostTypeDomain,
+				if !send(types.Host{IP: nil, Origin: line, Type: types.HostTypeDomain}) {
+					return
 				}
 				continue
 			}

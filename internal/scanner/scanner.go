@@ -73,6 +73,11 @@ func ScanTLS(ctx context.Context, host types.Host, cfg ScanConfig, geoReader *ge
 	}
 
 	state := c.ConnectionState()
+	if len(state.PeerCertificates) == 0 {
+		slog.Debug("TLS handshake succeeded but no peer certificates", "target", hostPort)
+		result.Error = "no peer cert"
+		return result
+	}
 	domain := state.PeerCertificates[0].Subject.CommonName
 	issuers := strings.Join(state.PeerCertificates[0].Issuer.Organization, " | ")
 	certExpiry := state.PeerCertificates[0].NotAfter
