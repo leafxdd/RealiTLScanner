@@ -135,19 +135,27 @@ func runLegacy(args []string) {
 	var (
 		scanCount atomic.Int64
 		startedAt = time.Now()
+		live      = output.NewLiveLog(os.Stderr, 7)
 	)
+	defer live.Close()
+
 	pipeCfg := pipeline.Config{
 		ScanWorkers: thread,
 		Mode:        pipeline.ModeStream,
 		ScanConfig:  cfg,
 		OnScan: func() {
 			n := scanCount.Add(1)
-			// Heartbeat every 50 scans so long /24-style sweeps don't look hung.
-			if n%50 == 0 {
+			// Non-TTY fallback: log scan progress periodically so log redirection
+			// still sees something happen during long sweeps. On a TTY the LiveLog
+			// already renders activity, so the periodic line would be noise.
+			if !live.Enabled() && n%50 == 0 {
 				slog.Info("Scanning progress",
 					"scanned", n,
 					"elapsed", time.Since(startedAt).Round(time.Second).String())
 			}
+		},
+		OnResult: func(r *types.ScanResult) {
+			live.Push(formatScanLine(r, scanCount.Load(), startedAt))
 		},
 	}
 
@@ -168,12 +176,41 @@ func runLegacy(args []string) {
 	if err := w.Close(); err != nil {
 		slog.Error("Error closing writer", "err", err)
 	}
+	live.Close()
 	stats := p.Stats()
 	slog.Info("Completed",
 		"elapsed", time.Since(startedAt).Round(time.Second).String(),
 		"attempted", stats.Attempted,
 		"tls_failed", stats.TLSFailed,
 		"dropped", stats.Dropped)
+}
+
+// formatScanLine renders a single per-scan event for the rolling LiveLog.
+func formatScanLine(r *types.ScanResult, total int64, startedAt time.Time) string {
+	target := r.Host.Origin
+	if r.IP != nil {
+		target = r.IP.String()
+	}
+	elapsed := time.Since(startedAt).Round(time.Second)
+	if r.TLS != nil {
+		alpn := r.TLS.ALPN
+		if alpn == "" {
+			alpn = "-"
+		}
+		mark := "✓"
+		if !r.Feasible {
+			mark = "·"
+		}
+		return fmt.Sprintf("[%6d %s] %s %s  %s  TLS=0x%04x ALPN=%s  cert=%s",
+			total, elapsed, mark, target,
+			r.TLS.HandshakeTime.Round(time.Millisecond),
+			r.TLS.Version, alpn, r.TLS.CertDomain)
+	}
+	reason := r.Error
+	if reason == "" {
+		reason = "unknown"
+	}
+	return fmt.Sprintf("[%6d %s] ✗ %s  %s", total, elapsed, target, reason)
 }
 
 func runScan(args []string) {

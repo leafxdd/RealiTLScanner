@@ -28,6 +28,28 @@ func testResult() *types.ScanResult {
 	}
 }
 
+func TestCSVWriter_FlushesPerRow(t *testing.T) {
+	// Buffer that records cumulative byte count seen by the writer — proves
+	// each Write hits the underlying io.Writer immediately rather than sitting
+	// in encoding/csv's internal buffer.
+	var buf bytes.Buffer
+	w := NewCSVWriter(&buf, Options{NoHeader: true})
+
+	if err := w.WriteResult(testResult()); err != nil {
+		t.Fatal(err)
+	}
+	if buf.Len() == 0 {
+		t.Fatal("after WriteResult, underlying buffer is empty — encoding/csv did not flush")
+	}
+	beforeSecond := buf.Len()
+	if err := w.WriteResult(testResult()); err != nil {
+		t.Fatal(err)
+	}
+	if buf.Len() <= beforeSecond {
+		t.Fatal("second WriteResult did not extend the underlying buffer")
+	}
+}
+
 func TestCSVWriter_DefaultFormat(t *testing.T) {
 	var buf bytes.Buffer
 	w := NewCSVWriter(&buf, Options{})

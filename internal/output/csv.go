@@ -25,7 +25,11 @@ func (c *CSVWriter) WriteHeader() error {
 	if c.opts.Extended {
 		header = append(header, "CDN_LEVEL", "GFW_BLOCKED", "SCORE")
 	}
-	return c.w.Write(header)
+	if err := c.w.Write(header); err != nil {
+		return err
+	}
+	c.w.Flush()
+	return c.w.Error()
 }
 
 func (c *CSVWriter) WriteResult(result *types.ScanResult) error {
@@ -50,7 +54,14 @@ func (c *CSVWriter) WriteResult(result *types.ScanResult) error {
 		}
 		fields = append(fields, cdnLevel, gfwBlocked, fmt.Sprintf("%d", result.Score))
 	}
-	return c.w.Write(fields)
+	if err := c.w.Write(fields); err != nil {
+		return err
+	}
+	// Flush per row so partial scans survive Ctrl+C — encoding/csv buffers
+	// internally; previous fmt.Fprintln-based implementation hit disk per call
+	// and callers relied on that for crash/abort recovery.
+	c.w.Flush()
+	return c.w.Error()
 }
 
 func (c *CSVWriter) Flush() error {

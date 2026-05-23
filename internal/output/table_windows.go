@@ -13,16 +13,21 @@ func enableVirtualTerminal() {
 	setConsoleMode := kernel32.NewProc("SetConsoleMode")
 	getConsoleMode := kernel32.NewProc("GetConsoleMode")
 
-	handle := syscall.Handle(os.Stdout.Fd())
-	var mode uint32
-	r, _, _ := getConsoleMode.Call(uintptr(handle), uintptr(unsafe.Pointer(&mode)))
-	if r == 0 {
-		colorEnabled = false
-		return
-	}
 	const ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
-	r, _, _ = setConsoleMode.Call(uintptr(handle), uintptr(mode|ENABLE_VIRTUAL_TERMINAL_PROCESSING))
-	if r == 0 {
+	// Enable VT on both stdout (table/color) and stderr (LiveLog cursor moves).
+	stdoutOK := enableVT(getConsoleMode, setConsoleMode, syscall.Handle(os.Stdout.Fd()), ENABLE_VIRTUAL_TERMINAL_PROCESSING)
+	enableVT(getConsoleMode, setConsoleMode, syscall.Handle(os.Stderr.Fd()), ENABLE_VIRTUAL_TERMINAL_PROCESSING)
+	if !stdoutOK {
 		colorEnabled = false
 	}
+}
+
+func enableVT(get, set *syscall.LazyProc, h syscall.Handle, flag uint32) bool {
+	var mode uint32
+	r, _, _ := get.Call(uintptr(h), uintptr(unsafe.Pointer(&mode)))
+	if r == 0 {
+		return false
+	}
+	r, _, _ = set.Call(uintptr(h), uintptr(mode|flag))
+	return r != 0
 }

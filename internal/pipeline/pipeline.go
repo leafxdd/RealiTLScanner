@@ -24,7 +24,8 @@ type Config struct {
 	Mode        Mode
 	ScanConfig  scanner.ScanConfig
 	OnScan      func()
-	PassAll     bool // send all TLS-connected results, not just feasible
+	OnResult    func(*types.ScanResult) // fires once per scan, before feasibility filtering
+	PassAll     bool                    // send all TLS-connected results, not just feasible
 }
 
 type Stats struct {
@@ -76,6 +77,9 @@ func (p *Pipeline) Run(ctx context.Context, hosts <-chan types.Host) (<-chan *ty
 				result := scanner.ScanTLS(ctx, host, p.cfg.ScanConfig, p.geo)
 				if p.cfg.OnScan != nil {
 					p.cfg.OnScan()
+				}
+				if p.cfg.OnResult != nil {
+					p.cfg.OnResult(result)
 				}
 				if result.TLS == nil {
 					p.tlsFailed.Add(1)
