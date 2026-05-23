@@ -132,10 +132,9 @@ func runLegacy(args []string) {
 	}
 
 	pipeCfg := pipeline.Config{
-		ScanWorkers:   thread,
-		DetectWorkers: thread,
-		Mode:          pipeline.ModeStream,
-		ScanConfig:    cfg,
+		ScanWorkers: thread,
+		Mode:        pipeline.ModeStream,
+		ScanConfig:  cfg,
 	}
 
 	p := pipeline.New(pipeCfg, geoReader, nil)
@@ -282,11 +281,10 @@ func runScan(args []string) {
 		scanCtx, scanCancel := signal.NotifyContext(ctx, os.Interrupt)
 
 		scanPipeCfg := pipeline.Config{
-			ScanWorkers:   thread,
-			DetectWorkers: thread,
-			Mode:          pipeline.ModeStream,
-			ScanConfig:    cfg,
-			PassAll:       true,
+			ScanWorkers: thread,
+			Mode:        pipeline.ModeStream,
+			ScanConfig:  cfg,
+			PassAll:     true,
 		}
 		sp := pipeline.New(scanPipeCfg, geoReader, nil)
 		scanCh, err := sp.Run(scanCtx, rawHosts)
@@ -372,11 +370,10 @@ func runScan(args []string) {
 	defer pipeCancel()
 
 	pipeCfg := pipeline.Config{
-		ScanWorkers:   thread,
-		DetectWorkers: thread,
-		Mode:          pipeline.ModeStream,
-		ScanConfig:    cfg,
-		PassAll:       true,
+		ScanWorkers: thread,
+		Mode:        pipeline.ModeStream,
+		ScanConfig:  cfg,
+		PassAll:     true,
 	}
 	p := pipeline.New(pipeCfg, geoReader, runner)
 	outCh, err := p.Run(pipeCtx, hostChan)

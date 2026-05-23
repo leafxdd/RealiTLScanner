@@ -14,9 +14,8 @@ import (
 
 func TestPipeline_Stream(t *testing.T) {
 	cfg := Config{
-		ScanWorkers:   1,
-		DetectWorkers: 1,
-		Mode:          ModeStream,
+		ScanWorkers: 1,
+		Mode:        ModeStream,
 		ScanConfig: scanner.ScanConfig{
 			Port:    443,
 			Timeout: 2 * time.Second,
@@ -120,10 +119,9 @@ func TestPipeline_NoGoroutineLeakOnCtxCancel(t *testing.T) {
 	startGoroutines := runtime.NumGoroutine()
 
 	cfg := Config{
-		ScanWorkers:   2,
-		DetectWorkers: 2,
-		Mode:          ModeStream,
-		PassAll:       true,
+		ScanWorkers: 2,
+		Mode:        ModeStream,
+		PassAll:     true,
 		ScanConfig: scanner.ScanConfig{
 			Port:    1, // unreachable — scans fail fast with no TLS
 			Timeout: 100 * time.Millisecond,

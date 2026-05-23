@@ -20,12 +20,11 @@ const (
 )
 
 type Config struct {
-	ScanWorkers   int
-	DetectWorkers int
-	Mode          Mode
-	ScanConfig    scanner.ScanConfig
-	OnScan        func()
-	PassAll       bool // send all TLS-connected results, not just feasible
+	ScanWorkers int
+	Mode        Mode
+	ScanConfig  scanner.ScanConfig
+	OnScan      func()
+	PassAll     bool // send all TLS-connected results, not just feasible
 }
 
 type Stats struct {
@@ -46,9 +45,6 @@ type Pipeline struct {
 func New(cfg Config, g *geo.Geo, runner *detector.Runner) *Pipeline {
 	if cfg.ScanWorkers <= 0 {
 		cfg.ScanWorkers = 2
-	}
-	if cfg.DetectWorkers <= 0 {
-		cfg.DetectWorkers = 2
 	}
 	return &Pipeline{cfg: cfg, geo: g, runner: runner}
 }
