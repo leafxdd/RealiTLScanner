@@ -64,7 +64,11 @@ func (p *Pipeline) Run(ctx context.Context, hosts <-chan types.Host) (<-chan *ty
 					p.cfg.OnScan()
 				}
 				if result.Feasible || (p.cfg.PassAll && result.TLS != nil) {
-					scanResultCh <- result
+					select {
+					case scanResultCh <- result:
+					case <-ctx.Done():
+						return
+					}
 				}
 			}
 		}()
@@ -108,7 +112,11 @@ func (p *Pipeline) runBatch(ctx context.Context, in <-chan *types.ScanResult) <-
 		close(batchCh)
 		detected := p.runner.Run(ctx, batchCh)
 		for r := range detected {
-			out <- r
+			select {
+			case out <- r:
+			case <-ctx.Done():
+				return
+			}
 		}
 	}()
 	return out

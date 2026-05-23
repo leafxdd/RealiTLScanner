@@ -34,7 +34,11 @@ func (r *Runner) Run(ctx context.Context, in <-chan *types.ScanResult) <-chan *t
 				default:
 				}
 				r.processOne(ctx, result)
-				out <- result
+				select {
+				case out <- result:
+				case <-ctx.Done():
+					return
+				}
 			}
 		}()
 	}

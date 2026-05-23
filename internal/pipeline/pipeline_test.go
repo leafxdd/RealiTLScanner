@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"runtime"
 	"testing"
 	"time"
 
@@ -73,4 +74,55 @@ func TestPipeline_NoDetector(t *testing.T) {
 
 	for range out {
 	}
+}
+
+// TestPipeline_NoGoroutineLeakOnCtxCancel — abandon the output channel,
+// cancel ctx, ensure worker goroutines do not leak waiting on send.
+func TestPipeline_NoGoroutineLeakOnCtxCancel(t *testing.T) {
+	startGoroutines := runtime.NumGoroutine()
+
+	cfg := Config{
+		ScanWorkers:   2,
+		DetectWorkers: 2,
+		Mode:          ModeStream,
+		PassAll:       true,
+		ScanConfig: scanner.ScanConfig{
+			Port:    1, // unreachable — scans fail fast with no TLS
+			Timeout: 100 * time.Millisecond,
+		},
+	}
+	runner := detector.NewRunner(nil, 1)
+	g := &geo.Geo{}
+	p := New(cfg, g, runner)
+
+	hosts := make(chan types.Host, 8)
+	for i := 0; i < 8; i++ {
+		hosts <- types.Host{IP: nil, Origin: "127.0.0.1", Type: types.HostTypeIP}
+	}
+	close(hosts)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	out, err := p.Run(ctx, hosts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Drain a couple, then abandon and cancel — simulates downstream death.
+	go func() {
+		for range out {
+		}
+	}()
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	// Allow goroutines to observe cancellation and exit.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		runtime.GC()
+		if runtime.NumGoroutine() <= startGoroutines+2 {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Errorf("goroutine leak: start=%d end=%d", startGoroutines, runtime.NumGoroutine())
 }
