@@ -34,6 +34,7 @@ func runCheck(args []string) int {
 	_ = fs.Parse(args)
 
 	setupLogging(verbose)
+	clearProxy()
 
 	if fs.NArg() < 1 {
 		fmt.Fprintln(os.Stderr, "Usage: realitlscanner check <domain> [flags]")

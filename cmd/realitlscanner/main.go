@@ -480,10 +480,12 @@ func setupLogging(verbose bool) {
 }
 
 func clearProxy() {
-	_ = os.Unsetenv("ALL_PROXY")
-	_ = os.Unsetenv("HTTP_PROXY")
-	_ = os.Unsetenv("HTTPS_PROXY")
-	_ = os.Unsetenv("NO_PROXY")
+	for _, name := range []string{
+		"ALL_PROXY", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
+		"all_proxy", "http_proxy", "https_proxy", "no_proxy",
+	} {
+		_ = os.Unsetenv(name)
+	}
 }
 
 // reorderArgs moves positional arguments (domains) after all flags
