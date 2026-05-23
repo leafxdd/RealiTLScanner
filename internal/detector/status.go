@@ -16,7 +16,23 @@ type StatusDetector struct {
 }
 
 func NewStatusDetector(timeout time.Duration) *StatusDetector {
-	return &StatusDetector{timeout: timeout}
+	return &StatusDetector{
+		timeout: timeout,
+		client: &http.Client{
+			Timeout: timeout,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+			Transport: &http.Transport{
+				DialContext:           (&net.Dialer{Timeout: timeout}).DialContext,
+				MaxIdleConns:          100,
+				MaxIdleConnsPerHost:   2,
+				IdleConnTimeout:       30 * time.Second,
+				TLSHandshakeTimeout:   timeout,
+				ResponseHeaderTimeout: timeout,
+			},
+		},
+	}
 }
 
 func (d *StatusDetector) Name() string { return "status" }
@@ -30,30 +46,17 @@ func (d *StatusDetector) Detect(ctx context.Context, result *types.ScanResult) e
 	if result.Redirect != nil {
 		return nil
 	}
-	if d.client == nil && !isSafeForProbe(result.TLS.CertDomain) {
+	if !d.injected() && !isSafeForProbe(result.TLS.CertDomain) {
 		return nil
 	}
 	url := fmt.Sprintf("https://%s", result.TLS.CertDomain)
-
-	client := d.client
-	if client == nil {
-		client = &http.Client{
-			Timeout: d.timeout,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
-			Transport: &http.Transport{
-				DialContext: (&net.Dialer{Timeout: d.timeout}).DialContext,
-			},
-		}
-	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
 	if err != nil {
 		return err
 	}
 
-	resp, err := client.Do(req)
+	resp, err := d.client.Do(req)
 	if err != nil {
 		return nil
 	}
@@ -61,4 +64,12 @@ func (d *StatusDetector) Detect(ctx context.Context, result *types.ScanResult) e
 
 	result.Redirect = &types.RedirectResult{StatusCode: resp.StatusCode}
 	return nil
+}
+
+func (d *StatusDetector) injected() bool {
+	tr, ok := d.client.Transport.(*http.Transport)
+	if !ok {
+		return true
+	}
+	return tr.DialContext == nil
 }
