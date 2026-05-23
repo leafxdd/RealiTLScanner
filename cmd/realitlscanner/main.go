@@ -335,11 +335,29 @@ func runScan(args []string) {
 		// Scan phase uses its own context so Ctrl+C stops scanning but allows detection to proceed
 		scanCtx, scanCancel := signal.NotifyContext(ctx, os.Interrupt)
 
+		var (
+			scanCount atomic.Int64
+			scanStart = time.Now()
+			live      = output.NewLiveLog(os.Stderr, 7)
+		)
+		defer live.Close()
+
 		scanPipeCfg := pipeline.Config{
 			ScanWorkers: thread,
 			Mode:        pipeline.ModeStream,
 			ScanConfig:  cfg,
 			PassAll:     true,
+			OnScan: func() {
+				n := scanCount.Add(1)
+				if !live.Enabled() && n%50 == 0 {
+					slog.Info("Scanning progress",
+						"scanned", n,
+						"elapsed", time.Since(scanStart).Round(time.Second).String())
+				}
+			},
+			OnResult: func(r *types.ScanResult) {
+				live.Push(formatScanLine(r, scanCount.Load(), scanStart))
+			},
 		}
 		sp := pipeline.New(scanPipeCfg, geoReader, nil)
 		scanCh, err := sp.Run(scanCtx, rawHosts)
@@ -371,6 +389,10 @@ func runScan(args []string) {
 			}
 		}
 		scanCancel()
+		// Park the LiveLog cursor below the rolling window before any further
+		// stderr writes (扫描中断 / 开始检测 / table.WriteHeader) so they don't
+		// land inside the region and corrupt the rendered frame.
+		live.Close()
 
 		if len(scanResults) == 0 {
 			fmt.Fprintf(os.Stderr, "[%s] 未发现可用域名\n", time.Now().Format("15:04:05"))
