@@ -100,13 +100,24 @@ func runLegacy(args []string) {
 		}
 	}
 
-	outWriter := openOutput(out)
-	if f, ok := outWriter.(*os.File); ok && f != os.Stdout {
-		defer f.Close()
+	outWriter, outCloser, err := openOutput(out)
+	if err != nil {
+		slog.Error("Cannot open output file", "path", out, "err", err)
+		return
+	}
+	if outCloser != nil {
+		defer func() {
+			if cerr := outCloser.Close(); cerr != nil {
+				slog.Error("Error closing output file", "path", out, "err", cerr)
+			}
+		}()
 	}
 
 	w := output.NewCSVWriter(outWriter, output.Options{})
-	_ = w.WriteHeader()
+	if err := w.WriteHeader(); err != nil {
+		slog.Error("Error writing header", "err", err)
+		return
+	}
 
 	geoReader := geo.NewGeo()
 	defer geoReader.Close()
@@ -135,9 +146,13 @@ func runLegacy(args []string) {
 	t := time.Now()
 	slog.Info("Started scanning")
 	for result := range outCh {
-		_ = w.WriteResult(result)
+		if err := w.WriteResult(result); err != nil {
+			slog.Error("Error writing result", "err", err)
+		}
 	}
-	_ = w.Close()
+	if err := w.Close(); err != nil {
+		slog.Error("Error closing writer", "err", err)
+	}
 	slog.Info("Completed", "elapsed", time.Since(t).String())
 }
 
@@ -451,16 +466,15 @@ func resolveHosts(ctx context.Context, addr, in, url string, enableIPv6, infinit
 	return nil
 }
 
-func openOutput(path string) io.Writer {
+func openOutput(path string) (io.Writer, io.Closer, error) {
 	if path == "" || path == "-" {
-		return os.Stdout
+		return os.Stdout, nil, nil
 	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
-		slog.Error("Error opening output file", "path", path)
-		return os.Stdout
+		return nil, nil, err
 	}
-	return f
+	return f, f, nil
 }
 
 func setupLogging(verbose bool) {
