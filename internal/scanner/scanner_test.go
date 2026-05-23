@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -94,9 +95,9 @@ func TestScanTLS_LocalServer(t *testing.T) {
 	defer cleanup()
 
 	host, portStr, _ := net.SplitHostPort(addr)
-	port := 0
-	for _, c := range portStr {
-		port = port*10 + int(c-'0')
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	cfg := ScanConfig{
@@ -133,9 +134,9 @@ func TestScanTLS_LocalServer(t *testing.T) {
 func portFromAddr(t *testing.T, addr string) int {
 	t.Helper()
 	_, portStr, _ := net.SplitHostPort(addr)
-	port := 0
-	for _, c := range portStr {
-		port = port*10 + int(c-'0')
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		t.Fatal(err)
 	}
 	return port
 }
@@ -206,9 +207,9 @@ func TestScanTLS_RespectsContextCancel(t *testing.T) {
 	}()
 
 	host, portStr, _ := net.SplitHostPort(ln.Addr().String())
-	port := 0
-	for _, ch := range portStr {
-		port = port*10 + int(ch-'0')
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	cfg := ScanConfig{
