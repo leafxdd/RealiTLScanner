@@ -44,10 +44,14 @@ func (tw *TableWriter) SetTotal(n int) {
 	tw.total = n
 }
 
+// tableSepLen matches the plain-text column total of the file-mode layout:
+// 30 + 1 + 8 + 1 + 10 + 1 + 10 + 1 + 8 + 1 + 6 + 1 + 6 + 1 + 8 = 93.
+const tableSepLen = 93
+
 func (tw *TableWriter) WriteHeader() {
 	header := fmt.Sprintf("%-30s %-8s %-10s %-10s %-8s %-6s %-6s %-8s",
 		"最终域名", "基础条件", "握手时间", "证书时间", "CDN", "热门", "推荐", "页面状态")
-	sep := strings.Repeat("-", 96)
+	sep := strings.Repeat("-", tableSepLen)
 
 	tw.mu.Lock()
 	defer tw.mu.Unlock()
@@ -153,7 +157,7 @@ func (tw *TableWriter) WriteSummaryWithStats(suitable, unsuitable int, elapsed t
 	tw.mu.Lock()
 	defer tw.mu.Unlock()
 
-	sep := strings.Repeat("-", 96)
+	sep := strings.Repeat("-", tableSepLen)
 	total := suitable + unsuitable
 	pct := float64(0)
 	if total > 0 {
