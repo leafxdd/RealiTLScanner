@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -111,6 +113,45 @@ func TestDataManager_DownloadRespectsMaxBytes(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "test.bin")); !os.IsNotExist(err) {
 		t.Error("oversized download must not leave behind the final file")
+	}
+}
+
+func TestDataManager_ConcurrentEnsureReady_NoDuplicateDownload(t *testing.T) {
+	var hits int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt64(&hits, 1)
+		// Simulate slow response so concurrent callers actually overlap.
+		time.Sleep(150 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok"))
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	dm := NewDataManager(dir)
+	dm.files["test"] = &ManagedFile{
+		Name:        "test",
+		State:       StateMissing,
+		Path:        filepath.Join(dir, "test.bin"),
+		MaxAge:      time.Hour,
+		DownloadURL: srv.URL,
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := dm.EnsureReady(context.Background(), "test"); err != nil {
+				t.Errorf("EnsureReady: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	got := atomic.LoadInt64(&hits)
+	if got != 1 {
+		t.Errorf("expected exactly 1 download, got %d", got)
 	}
 }
 

@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 )
 
 type FileState int
@@ -38,6 +40,7 @@ type DataManager struct {
 	baseDir string
 	files   map[string]*ManagedFile
 	mu      sync.RWMutex
+	sf      singleflight.Group
 }
 
 func NewDataManager(baseDir string) *DataManager {
@@ -91,11 +94,15 @@ func (m *DataManager) EnsureReady(ctx context.Context, names ...string) error {
 	for _, name := range names {
 		m.mu.RLock()
 		f, ok := m.files[name]
+		state := FileState(StateMissing)
+		if ok {
+			state = f.State
+		}
 		m.mu.RUnlock()
 		if !ok {
 			return fmt.Errorf("unknown data file: %s", name)
 		}
-		if f.State == StateReady {
+		if state == StateReady {
 			continue
 		}
 		if f.Embedded != nil {
@@ -104,8 +111,19 @@ func (m *DataManager) EnsureReady(ctx context.Context, names ...string) error {
 		if f.DownloadURL == "" {
 			continue
 		}
-		slog.Info("Downloading data file...", "name", name, "url", f.DownloadURL)
-		if err := m.download(ctx, f); err != nil {
+		// singleflight dedups concurrent EnsureReady calls for the same file.
+		_, err, _ := m.sf.Do(name, func() (any, error) {
+			// Re-check inside flight — another caller may have finished it.
+			m.mu.RLock()
+			ready := f.State == StateReady
+			m.mu.RUnlock()
+			if ready {
+				return nil, nil
+			}
+			slog.Info("Downloading data file...", "name", name, "url", f.DownloadURL)
+			return nil, m.download(ctx, f)
+		})
+		if err != nil {
 			return fmt.Errorf("failed to download %s: %w", name, err)
 		}
 	}
