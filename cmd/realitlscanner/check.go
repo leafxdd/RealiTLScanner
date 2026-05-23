@@ -20,15 +20,17 @@ import (
 func runCheck(args []string) {
 	fs := flag.NewFlagSet("check", flag.ExitOnError)
 	var (
-		port    int
-		timeout int
-		dataDir string
-		verbose bool
+		port         int
+		timeout      int
+		dataDir      string
+		verbose      bool
+		skipDownload bool
 	)
 	fs.IntVar(&port, "port", 443, "HTTPS port")
 	fs.IntVar(&timeout, "timeout", 10, "Timeout (seconds)")
 	fs.StringVar(&dataDir, "data-dir", ".", "Data files directory")
 	fs.BoolVar(&verbose, "v", false, "Verbose output")
+	fs.BoolVar(&skipDownload, "skip-download", false, "Continue even if data file download fails")
 	_ = fs.Parse(args)
 
 	setupLogging(verbose)
@@ -79,7 +81,14 @@ func runCheck(args []string) {
 	fmt.Printf("Feasible:     %v\n", result.Feasible)
 
 	dm := data.NewDataManager(dataDir)
-	_ = dm.EnsureReady(ctx, "cdn_keywords", "hot_websites", "gfwlist")
+	if err := dm.EnsureReady(ctx, "cdn_keywords", "hot_websites", "gfwlist"); err != nil {
+		if skipDownload {
+			slog.Warn("Data file download failed, continuing with limited detection", "err", err)
+		} else {
+			slog.Error("Data file download failed (use -skip-download to continue anyway)", "err", err)
+			return
+		}
+	}
 	dets := buildDetectors(dm, geoReader, "all")
 	runner := detector.NewRunner(dets, 1)
 	runner.ProcessOne(ctx, result)
