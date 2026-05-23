@@ -446,12 +446,12 @@ func resolveHosts(ctx context.Context, addr, in, url string, enableIPv6, infinit
 		return scanner.IterateAddrInfiniteCtx(ctx, addr, enableIPv6, infinite)
 	}
 	if in != "" {
-		f, err := os.Open(in)
+		ch, err := scanner.IterateFileCtx(ctx, in, enableIPv6)
 		if err != nil {
-			slog.Error("Error reading file", "path", in)
+			slog.Error("Error reading file", "path", in, "err", err)
 			return nil
 		}
-		return scanner.IterateCtx(ctx, f, enableIPv6)
+		return ch
 	}
 	if url != "" {
 		slog.Info("Fetching url...")

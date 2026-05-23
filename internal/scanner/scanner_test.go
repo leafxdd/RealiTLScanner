@@ -357,3 +357,31 @@ func TestIterateAddrInfinite_StopsAtBoundary(t *testing.T) {
 		}
 	}
 }
+
+func TestIterateFileCtx_ClosesFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hosts.txt")
+	if err := os.WriteFile(path, []byte("1.2.3.4\n5.6.7.8\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ch, err := IterateFileCtx(context.Background(), path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range ch {
+	}
+
+	// On Windows an open file cannot be removed; os.Remove succeeding implies
+	// the underlying handle was released by the producer goroutine.
+	if err := os.Remove(path); err != nil {
+		t.Errorf("file not closed after iteration (remove failed): %v", err)
+	}
+}
+
+func TestIterateFileCtx_OpenError(t *testing.T) {
+	_, err := IterateFileCtx(context.Background(), filepath.Join(t.TempDir(), "nope.txt"), false)
+	if err == nil {
+		t.Error("expected open error for missing file")
+	}
+}

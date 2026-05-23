@@ -11,6 +11,7 @@ import (
 	"math/big"
 	"net"
 	"net/netip"
+	"os"
 	"regexp"
 	"strings"
 
@@ -21,67 +22,103 @@ func Iterate(reader io.Reader, enableIPv6 bool) <-chan types.Host {
 	return IterateCtx(context.Background(), reader, enableIPv6)
 }
 
-func IterateCtx(ctx context.Context, reader io.Reader, enableIPv6 bool) <-chan types.Host {
-	s := bufio.NewScanner(reader)
+// IterateFileCtx opens path and streams hosts; the file is closed when the
+// producer goroutine exits (normal EOF or ctx cancellation).
+func IterateFileCtx(ctx context.Context, path string, enableIPv6 bool) (<-chan types.Host, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	rc := &fileReadCloser{f: f}
+	return iterateRC(ctx, rc, enableIPv6), nil
+}
+
+type fileReadCloser struct {
+	f *os.File
+}
+
+func (r *fileReadCloser) Read(p []byte) (int, error) { return r.f.Read(p) }
+func (r *fileReadCloser) Close() error               { return r.f.Close() }
+
+func iterateRC(ctx context.Context, rc io.ReadCloser, enableIPv6 bool) <-chan types.Host {
 	hostChan := make(chan types.Host)
 	go func() {
 		defer close(hostChan)
-		send := func(h types.Host) bool {
-			select {
-			case <-ctx.Done():
-				return false
-			case hostChan <- h:
-				return true
+		defer func() {
+			if err := rc.Close(); err != nil {
+				slog.Debug("Close input reader", "err", err)
 			}
-		}
-		for s.Scan() {
-			line := strings.TrimSpace(s.Text())
-			if line == "" {
-				continue
-			}
-			ip := net.ParseIP(line)
-			if ip != nil && (ip.To4() != nil || enableIPv6) {
-				if !send(types.Host{IP: ip, Origin: line, Type: types.HostTypeIP}) {
-					return
-				}
-				continue
-			}
-			_, _, err := net.ParseCIDR(line)
-			if err == nil {
-				p, err := netip.ParsePrefix(line)
-				if err != nil {
-					slog.Warn("Invalid cidr", "cidr", line, "err", err)
-					continue
-				}
-				if !p.Addr().Is4() && !enableIPv6 {
-					continue
-				}
-				p = p.Masked()
-				addr := p.Addr()
-				for p.Contains(addr) {
-					ip = net.ParseIP(addr.String())
-					if ip != nil {
-						if !send(types.Host{IP: ip, Origin: line, Type: types.HostTypeCIDR}) {
-							return
-						}
-					}
-					addr = addr.Next()
-				}
-				continue
-			}
-			if ValidateDomainName(line) {
-				if !send(types.Host{IP: nil, Origin: line, Type: types.HostTypeDomain}) {
-					return
-				}
-				continue
-			}
-			slog.Warn("Not a valid IP, IP CIDR or domain", "line", line)
-		}
-		if err := s.Err(); err != nil && !errors.Is(err, io.EOF) {
-			slog.Error("Read file error", "err", err)
-		}
+		}()
+		emit(ctx, rc, enableIPv6, hostChan)
 	}()
 	return hostChan
+}
+
+func IterateCtx(ctx context.Context, reader io.Reader, enableIPv6 bool) <-chan types.Host {
+	hostChan := make(chan types.Host)
+	go func() {
+		defer close(hostChan)
+		emit(ctx, reader, enableIPv6, hostChan)
+	}()
+	return hostChan
+}
+
+func emit(ctx context.Context, reader io.Reader, enableIPv6 bool, hostChan chan<- types.Host) {
+	s := bufio.NewScanner(reader)
+	send := func(h types.Host) bool {
+		select {
+		case <-ctx.Done():
+			return false
+		case hostChan <- h:
+			return true
+		}
+	}
+	for s.Scan() {
+		line := strings.TrimSpace(s.Text())
+		if line == "" {
+			continue
+		}
+		ip := net.ParseIP(line)
+		if ip != nil && (ip.To4() != nil || enableIPv6) {
+			if !send(types.Host{IP: ip, Origin: line, Type: types.HostTypeIP}) {
+				return
+			}
+			continue
+		}
+		_, _, err := net.ParseCIDR(line)
+		if err == nil {
+			p, err := netip.ParsePrefix(line)
+			if err != nil {
+				slog.Warn("Invalid cidr", "cidr", line, "err", err)
+				continue
+			}
+			if !p.Addr().Is4() && !enableIPv6 {
+				continue
+			}
+			p = p.Masked()
+			addr := p.Addr()
+			for p.Contains(addr) {
+				ip = net.ParseIP(addr.String())
+				if ip != nil {
+					if !send(types.Host{IP: ip, Origin: line, Type: types.HostTypeCIDR}) {
+						return
+					}
+				}
+				addr = addr.Next()
+			}
+			continue
+		}
+		if ValidateDomainName(line) {
+			if !send(types.Host{IP: nil, Origin: line, Type: types.HostTypeDomain}) {
+				return
+			}
+			continue
+		}
+		slog.Warn("Not a valid IP, IP CIDR or domain", "line", line)
+	}
+	if err := s.Err(); err != nil && !errors.Is(err, io.EOF) {
+		slog.Error("Read file error", "err", err)
+	}
 }
 
 func IterateAddr(addr string, enableIPv6 bool) <-chan types.Host {
