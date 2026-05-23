@@ -404,12 +404,8 @@ func runScan(args []string) {
 }
 
 func buildDetectors(dm *data.DataManager, geoReader *geo.Geo, filter string) []detector.Detector {
-	cdnData, _ := dm.Get("cdn_keywords")
-	hotData, _ := dm.Get("hot_websites")
-
-	cdnPath := writeTempFile(cdnData, "cdn_keywords.txt")
-	hotPath := writeTempFile(hotData, "hot_websites.txt")
-
+	cdnPath, _ := dm.GetPath("cdn_keywords")
+	hotPath, _ := dm.GetPath("hot_websites")
 	gfwPath, _ := dm.GetPath("gfwlist")
 
 	dets := []detector.Detector{
@@ -438,19 +434,6 @@ func buildDetectors(dm *data.DataManager, geoReader *geo.Geo, filter string) []d
 		}
 	}
 	return filtered
-}
-
-func writeTempFile(content []byte, name string) string {
-	if len(content) == 0 {
-		return ""
-	}
-	f, err := os.CreateTemp("", name)
-	if err != nil {
-		return ""
-	}
-	_, _ = f.Write(content)
-	f.Close()
-	return f.Name()
 }
 
 func resolveHosts(ctx context.Context, addr, in, url string, enableIPv6, infinite bool) <-chan types.Host {

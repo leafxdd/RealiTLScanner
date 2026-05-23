@@ -72,6 +72,41 @@ func TestDataManager_GetPath_Embedded(t *testing.T) {
 	}
 }
 
+func TestDataManager_GetPath_EmbeddedCached(t *testing.T) {
+	dm := NewDataManager(t.TempDir())
+
+	p1, err := dm.GetPath("cdn_keywords")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p2, err := dm.GetPath("cdn_keywords")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p1 != p2 {
+		t.Errorf("GetPath should return cached path; got %q vs %q", p1, p2)
+	}
+
+	stat1, err := os.Stat(p1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Re-call GetPath multiple times; ModTime must not change (no re-write).
+	for i := 0; i < 10; i++ {
+		if _, err := dm.GetPath("cdn_keywords"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stat2, err := os.Stat(p1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stat1.ModTime().Equal(stat2.ModTime()) {
+		t.Errorf("embedded tmp was re-written; ModTime drifted %v -> %v",
+			stat1.ModTime(), stat2.ModTime())
+	}
+}
+
 func TestDataManager_EnsureReady_Embedded(t *testing.T) {
 	dm := NewDataManager(t.TempDir())
 	err := dm.EnsureReady(context.Background(), "cdn_keywords", "hot_websites")

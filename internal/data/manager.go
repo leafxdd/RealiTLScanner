@@ -84,7 +84,27 @@ func NewDataManager(baseDir string) *DataManager {
 				}
 			}
 		}
-		_ = name
+		// Embedded files are materialised once to TempDir; subsequent GetPath
+		// calls return the cached path without re-writing.
+		if f.Embedded != nil && f.Path == "" {
+			tmp, err := os.CreateTemp("", "realitlscanner-"+name+"-*")
+			if err != nil {
+				slog.Warn("Failed to materialise embedded data", "name", name, "err", err)
+				continue
+			}
+			if _, err := tmp.Write(f.Embedded); err != nil {
+				slog.Warn("Failed to write embedded data", "name", name, "err", err)
+				tmp.Close()
+				os.Remove(tmp.Name())
+				continue
+			}
+			if err := tmp.Close(); err != nil {
+				slog.Warn("Failed to close embedded tmp", "name", name, "err", err)
+				os.Remove(tmp.Name())
+				continue
+			}
+			f.Path = tmp.Name()
+		}
 	}
 
 	return dm
@@ -156,15 +176,8 @@ func (m *DataManager) GetPath(name string) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("unknown data file: %s", name)
 	}
-	if f.Path != "" && (f.State == StateReady || f.State == StateStale) {
+	if f.Path != "" {
 		return f.Path, nil
-	}
-	if f.Embedded != nil {
-		tmpPath := filepath.Join(m.baseDir, name+".tmp")
-		if err := os.WriteFile(tmpPath, f.Embedded, 0644); err != nil {
-			return "", err
-		}
-		return tmpPath, nil
 	}
 	return "", fmt.Errorf("data file not available: %s", name)
 }
