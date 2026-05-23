@@ -89,12 +89,35 @@ func (l *LiveLog) Close() {
 		return
 	}
 	l.render()
+	// Park the cursor below the window. After render, cursor is at the top
+	// of the region (col 0). Move down N rows so subsequent writes append.
+	fmt.Fprintf(l.out, "\x1b[%dB\r", l.max)
 }
 
+// render draws the buffer in a fixed N-line region anchored at the row where
+// the LiveLog was first drawn.
+//
+// Invariant: on entry, the cursor sits at column 0 of the region's top row.
+// On exit, it sits at the same position so the next render can overwrite
+// in place without scrolling the terminal.
+//
+// First-time setup writes N blank lines to reserve space (the terminal may
+// scroll naturally), then moves cursor back up N. From then on, each render
+// writes (N-1) lines terminated by \n plus a final line WITHOUT \n, then
+// returns the cursor to the region top via \r + cursor-up.
+//
+// The previous implementation appended \n after every line, which caused a
+// scroll on every render when the region happened to anchor at the bottom of
+// the viewport: each scroll evicted the topmost rendered row into scrollback,
+// inflating the apparent window size after many redraws.
 func (l *LiveLog) render() {
-	if l.drawn {
-		fmt.Fprintf(l.out, "\x1b[%dA", l.max) // cursor up N
-	} else {
+	if !l.drawn {
+		// Reserve N rows. \n at the last visible row triggers a one-time
+		// scroll if needed; after that the region is stable.
+		for i := 0; i < l.max; i++ {
+			fmt.Fprintln(l.out)
+		}
+		fmt.Fprintf(l.out, "\x1b[%dA", l.max)
 		l.drawn = true
 	}
 	for i := 0; i < l.max; i++ {
@@ -102,7 +125,17 @@ func (l *LiveLog) render() {
 		if i < len(l.lines) {
 			text = l.lines[i]
 		}
-		fmt.Fprintf(l.out, "\x1b[2K%s\n", text) // clear line + content + newline
+		fmt.Fprintf(l.out, "\x1b[2K%s", text) // clear + content (no \n yet)
+		if i < l.max-1 {
+			fmt.Fprint(l.out, "\n") // newline between lines, NOT after last
+		}
+	}
+	// Cursor is at end of the last region line. \r → col 0;
+	// cursor-up (N-1) → top of region. Next render overwrites in place.
+	if l.max > 1 {
+		fmt.Fprintf(l.out, "\r\x1b[%dA", l.max-1)
+	} else {
+		fmt.Fprint(l.out, "\r")
 	}
 	l.lastDraw = time.Now()
 }
