@@ -7,6 +7,7 @@ import (
 	"net"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/xtls/RealiTLScanner/internal/types"
 )
@@ -227,6 +228,58 @@ func TestJSONWriter_SummaryStats_AllNonFeasible(t *testing.T) {
 	}
 	if out.Summary.DetectionRate != "0.0%" {
 		t.Errorf("DetectionRate: got %q, want %q", out.Summary.DetectionRate, "0.0%")
+	}
+}
+
+func TestJSONWriter_ExtendedFields_Populated(t *testing.T) {
+	var buf bytes.Buffer
+	w := NewJSONWriter(&buf, Options{Pretty: false})
+	r := testResult()
+	r.TLS.HandshakeTime = 123 * time.Millisecond
+	r.TLS.CertExpiry = time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+	r.HotSite = &types.HotSiteResult{IsHot: true, Category: "cdn"}
+	r.Redirect = &types.RedirectResult{Redirects: true, StatusCode: 301, Target: "https://elsewhere.example"}
+	sniMatch := true
+	r.CertValid = &types.CertValidResult{Valid: true, SNIMatch: &sniMatch}
+	r.Error = "none"
+	if err := w.WriteResult(r); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var out jsonOutput
+	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Results) != 1 {
+		t.Fatalf("want 1 result, got %d", len(out.Results))
+	}
+	got := out.Results[0]
+	if got.TLS == nil {
+		t.Fatal("want TLS")
+	}
+	if got.TLS.HandshakeMS != 123 {
+		t.Errorf("HandshakeMS: got %d, want 123", got.TLS.HandshakeMS)
+	}
+	if got.TLS.CertExpiry == "" {
+		t.Error("CertExpiry empty")
+	}
+	if got.TLS.VersionName == "" {
+		t.Error("VersionName empty")
+	}
+	if got.HotSite == nil || !got.HotSite.IsHot {
+		t.Errorf("HotSite missing/wrong: %+v", got.HotSite)
+	}
+	if got.Redirect == nil || got.Redirect.StatusCode != 301 {
+		t.Errorf("Redirect missing/wrong: %+v", got.Redirect)
+	}
+	if got.CertValid == nil || !got.CertValid.Valid {
+		t.Errorf("CertValid missing/wrong: %+v", got.CertValid)
+	}
+	if got.Error != "none" {
+		t.Errorf("Error: got %q, want %q", got.Error, "none")
 	}
 }
 

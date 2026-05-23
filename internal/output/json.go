@@ -1,6 +1,7 @@
 package output
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,9 +11,9 @@ import (
 )
 
 type jsonOutput struct {
-	Metadata jsonMetadata        `json:"metadata"`
-	Results  []jsonResult        `json:"results"`
-	Summary  jsonSummary         `json:"summary"`
+	Metadata jsonMetadata `json:"metadata"`
+	Results  []jsonResult `json:"results"`
+	Summary  jsonSummary  `json:"summary"`
 }
 
 type jsonMetadata struct {
@@ -21,21 +22,28 @@ type jsonMetadata struct {
 }
 
 type jsonResult struct {
-	IP       string          `json:"ip"`
-	Origin   string          `json:"origin"`
-	TLS      *jsonTLS        `json:"tls,omitempty"`
-	GeoCode  string          `json:"geo_code"`
-	CDN      *types.CDNResult `json:"cdn,omitempty"`
-	GFW      *types.GFWResult `json:"gfw,omitempty"`
-	Feasible bool            `json:"feasible"`
-	Score    int             `json:"score,omitempty"`
+	IP        string                 `json:"ip"`
+	Origin    string                 `json:"origin"`
+	TLS       *jsonTLS               `json:"tls,omitempty"`
+	GeoCode   string                 `json:"geo_code"`
+	CDN       *types.CDNResult       `json:"cdn,omitempty"`
+	GFW       *types.GFWResult       `json:"gfw,omitempty"`
+	HotSite   *types.HotSiteResult   `json:"hot_site,omitempty"`
+	Redirect  *types.RedirectResult  `json:"redirect,omitempty"`
+	CertValid *types.CertValidResult `json:"cert_valid,omitempty"`
+	Feasible  bool                   `json:"feasible"`
+	Score     int                    `json:"score,omitempty"`
+	Error     string                 `json:"error,omitempty"`
 }
 
 type jsonTLS struct {
-	Version    string `json:"version"`
-	ALPN       string `json:"alpn"`
-	CertDomain string `json:"cert_domain"`
-	CertIssuer string `json:"cert_issuer"`
+	Version       string `json:"version"`
+	VersionName   string `json:"version_name,omitempty"`
+	ALPN          string `json:"alpn"`
+	CertDomain    string `json:"cert_domain"`
+	CertIssuer    string `json:"cert_issuer"`
+	HandshakeMS   int64  `json:"handshake_ms,omitempty"`
+	CertExpiry    string `json:"cert_expiry,omitempty"`
 }
 
 type jsonSummary struct {
@@ -118,21 +126,31 @@ func (j *JSONLWriter) Close() error { return nil }
 
 func toJSONResult(result *types.ScanResult) jsonResult {
 	r := jsonResult{
-		IP:       result.IP.String(),
-		Origin:   result.Host.Origin,
-		GeoCode:  result.GeoCode,
-		CDN:      result.CDN,
-		GFW:      result.GFW,
-		Feasible: result.Feasible,
-		Score:    result.Score,
+		IP:        result.IP.String(),
+		Origin:    result.Host.Origin,
+		GeoCode:   result.GeoCode,
+		CDN:       result.CDN,
+		GFW:       result.GFW,
+		HotSite:   result.HotSite,
+		Redirect:  result.Redirect,
+		CertValid: result.CertValid,
+		Feasible:  result.Feasible,
+		Score:     result.Score,
+		Error:     result.Error,
 	}
 	if result.TLS != nil {
-		r.TLS = &jsonTLS{
-			Version:    fmt.Sprintf("0x%04x", result.TLS.Version),
-			ALPN:       result.TLS.ALPN,
-			CertDomain: result.TLS.CertDomain,
-			CertIssuer: result.TLS.CertIssuer,
+		j := &jsonTLS{
+			Version:     fmt.Sprintf("0x%04x", result.TLS.Version),
+			VersionName: tls.VersionName(result.TLS.Version),
+			ALPN:        result.TLS.ALPN,
+			CertDomain:  result.TLS.CertDomain,
+			CertIssuer:  result.TLS.CertIssuer,
+			HandshakeMS: result.TLS.HandshakeTime.Milliseconds(),
 		}
+		if !result.TLS.CertExpiry.IsZero() {
+			j.CertExpiry = result.TLS.CertExpiry.UTC().Format(time.RFC3339)
+		}
+		r.TLS = j
 	}
 	return r
 }
