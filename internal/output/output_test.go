@@ -231,6 +231,20 @@ func TestJSONWriter_SummaryStats_AllNonFeasible(t *testing.T) {
 	}
 }
 
+func TestTableWriter_RedirectStripsANSI(t *testing.T) {
+	var buf bytes.Buffer
+	tw := NewTableWriter(&buf, nil)
+	r := testResult()
+	r.Score = 3
+	tw.WriteHeader()
+	tw.WriteResult(r)
+
+	out := buf.String()
+	if strings.Contains(out, "\x1b[") {
+		t.Errorf("buffer (non-TTY) writer should have no ANSI escapes, got: %q", out)
+	}
+}
+
 func TestTableWriter_HandlesNilTLS(t *testing.T) {
 	var buf bytes.Buffer
 	tw := NewTableWriter(&buf, nil)

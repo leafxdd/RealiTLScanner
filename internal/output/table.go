@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -29,15 +30,34 @@ func init() {
 }
 
 type TableWriter struct {
-	termW io.Writer
-	fileW io.Writer
-	mu    sync.Mutex
-	count int
-	total int
+	termW        io.Writer
+	fileW        io.Writer
+	mu           sync.Mutex
+	count        int
+	total        int
+	colorEnabled bool
 }
 
 func NewTableWriter(term io.Writer, file io.Writer) *TableWriter {
-	return &TableWriter{termW: term, fileW: file}
+	return &TableWriter{
+		termW:        term,
+		fileW:        file,
+		colorEnabled: colorEnabled && isTTY(term),
+	}
+}
+
+// isTTY reports whether w is a character device — terminals are; pipes,
+// redirected files, and bytes.Buffer are not.
+func isTTY(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	if !ok {
+		return false
+	}
+	info, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
 }
 
 func (tw *TableWriter) SetTotal(n int) {
@@ -48,6 +68,17 @@ func (tw *TableWriter) SetTotal(n int) {
 // 30 + 1 + 8 + 1 + 10 + 1 + 10 + 1 + 8 + 1 + 6 + 1 + 6 + 1 + 8 = 93.
 const tableSepLen = 93
 
+var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+// writeTerm writes s to the terminal stream, stripping ANSI colour escapes
+// when the destination is not a TTY.
+func (tw *TableWriter) writeTerm(s string) {
+	if !tw.colorEnabled {
+		s = ansiRE.ReplaceAllString(s, "")
+	}
+	fmt.Fprint(tw.termW, s)
+}
+
 func (tw *TableWriter) WriteHeader() {
 	header := fmt.Sprintf("%-30s %-8s %-10s %-10s %-8s %-6s %-6s %-8s",
 		"最终域名", "基础条件", "握手时间", "证书时间", "CDN", "热门", "推荐", "页面状态")
@@ -55,9 +86,9 @@ func (tw *TableWriter) WriteHeader() {
 
 	tw.mu.Lock()
 	defer tw.mu.Unlock()
-	fmt.Fprintln(tw.termW, sep)
-	fmt.Fprintln(tw.termW, header)
-	fmt.Fprintln(tw.termW, sep)
+	tw.writeTerm(sep + "\n")
+	tw.writeTerm(header + "\n")
+	tw.writeTerm(sep + "\n")
 
 	if tw.fileW != nil {
 		fmt.Fprintln(tw.fileW, sep)
@@ -132,7 +163,7 @@ func (tw *TableWriter) WriteResult(result *types.ScanResult) {
 
 	termLine := fmt.Sprintf("%-30s %-18s %-20s %-20s %-18s %-16s %-16s %-18s",
 		domain, baseStr, hsStr, certStr, cdnStr, hotStr, starsStr, statusStr)
-	fmt.Fprintln(tw.termW, termLine)
+	tw.writeTerm(termLine + "\n")
 
 	if tw.fileW != nil {
 		fileLine := fmt.Sprintf("%-30s %-8s %-10s %-10s %-8s %-6s %-6s %-8s",
@@ -171,7 +202,7 @@ func (tw *TableWriter) WriteSummaryWithStats(suitable, unsuitable int, elapsed t
 			stats.Attempted, stats.TLSFailed, stats.Dropped)
 	}
 
-	fmt.Fprint(tw.termW, summary)
+	tw.writeTerm(summary)
 	if tw.fileW != nil {
 		fmt.Fprint(tw.fileW, summary)
 	}
