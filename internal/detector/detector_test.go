@@ -2,7 +2,11 @@ package detector
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"testing"
+	"time"
 
 	"github.com/xtls/RealiTLScanner/internal/types"
 )
@@ -87,5 +91,67 @@ func TestRunner(t *testing.T) {
 	}
 	if result.CertValid == nil {
 		t.Fatal("expected CertValid to be set by runner")
+	}
+}
+
+func TestStatusDetector_PreservesRedirectStatusCode(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	u, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	d := NewStatusDetector(2 * time.Second)
+	d.client = server.Client()
+
+	result := &types.ScanResult{
+		TLS:      &types.TLSInfo{CertDomain: u.Host},
+		Redirect: &types.RedirectResult{StatusCode: 301, Target: "https://elsewhere.example", Redirects: true},
+	}
+	if err := d.Detect(context.Background(), result); err != nil {
+		t.Fatal(err)
+	}
+
+	if result.Redirect.StatusCode != 301 {
+		t.Errorf("expected Redirect.StatusCode preserved as 301, got %d", result.Redirect.StatusCode)
+	}
+	if result.Redirect.Target != "https://elsewhere.example" {
+		t.Errorf("expected Redirect.Target preserved, got %q", result.Redirect.Target)
+	}
+	if !result.Redirect.Redirects {
+		t.Error("expected Redirects flag preserved as true")
+	}
+}
+
+func TestStatusDetector_WritesWhenRedirectIsNil(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	u, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	d := NewStatusDetector(2 * time.Second)
+	d.client = server.Client()
+
+	result := &types.ScanResult{
+		TLS: &types.TLSInfo{CertDomain: u.Host},
+	}
+	if err := d.Detect(context.Background(), result); err != nil {
+		t.Fatal(err)
+	}
+
+	if result.Redirect == nil {
+		t.Fatal("expected Redirect to be set")
+	}
+	if result.Redirect.StatusCode != 200 {
+		t.Errorf("expected StatusCode 200, got %d", result.Redirect.StatusCode)
 	}
 }

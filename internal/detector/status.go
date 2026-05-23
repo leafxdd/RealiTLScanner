@@ -12,6 +12,7 @@ import (
 
 type StatusDetector struct {
 	timeout time.Duration
+	client  *http.Client
 }
 
 func NewStatusDetector(timeout time.Duration) *StatusDetector {
@@ -26,13 +27,22 @@ func (d *StatusDetector) Detect(ctx context.Context, result *types.ScanResult) e
 	if result.TLS == nil || result.TLS.CertDomain == "" {
 		return nil
 	}
+	if result.Redirect != nil {
+		return nil
+	}
 	url := fmt.Sprintf("https://%s", result.TLS.CertDomain)
 
-	client := &http.Client{
-		Timeout: d.timeout,
-		Transport: &http.Transport{
-			DialContext: (&net.Dialer{Timeout: d.timeout}).DialContext,
-		},
+	client := d.client
+	if client == nil {
+		client = &http.Client{
+			Timeout: d.timeout,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+			Transport: &http.Transport{
+				DialContext: (&net.Dialer{Timeout: d.timeout}).DialContext,
+			},
+		}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
@@ -46,9 +56,6 @@ func (d *StatusDetector) Detect(ctx context.Context, result *types.ScanResult) e
 	}
 	defer resp.Body.Close()
 
-	if result.Redirect == nil {
-		result.Redirect = &types.RedirectResult{}
-	}
-	result.Redirect.StatusCode = resp.StatusCode
+	result.Redirect = &types.RedirectResult{StatusCode: resp.StatusCode}
 	return nil
 }
