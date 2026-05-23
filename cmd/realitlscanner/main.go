@@ -58,6 +58,7 @@ func runLegacy(args []string) {
 		enableIPv6   bool
 		url          string
 		skipDownload bool
+		infinite     bool
 	)
 
 	fs.StringVar(&addr, "addr", "", "Specify an IP, IP CIDR or domain to scan")
@@ -70,6 +71,7 @@ func runLegacy(args []string) {
 	fs.BoolVar(&enableIPv6, "46", false, "Enable IPv6")
 	fs.StringVar(&url, "url", "", "Crawl domain list from URL")
 	fs.BoolVar(&skipDownload, "skip-download", false, "Continue even if data file download fails")
+	fs.BoolVar(&infinite, "infinite", false, "When -addr is a single IP/domain, continuously scan neighbour IPs (default: single host)")
 	_ = fs.Parse(args)
 
 	setupLogging(verbose)
@@ -81,12 +83,11 @@ func runLegacy(args []string) {
 		return
 	}
 
-	hostChan := resolveHosts(addr, in, url, enableIPv6)
+	hostChan := resolveHosts(addr, in, url, enableIPv6, infinite)
 	if hostChan == nil {
 		return
 	}
 
-	// Download geoip for basic scanning
 	dm := data.NewDataManager(".")
 	dlCtx := context.Background()
 	if err := dm.EnsureReady(dlCtx, "geoip"); err != nil {
@@ -158,6 +159,7 @@ func runScan(args []string) {
 		enableIPv6   bool
 		url          string
 		skipDownload bool
+		infinite     bool
 	)
 
 	fs.StringVar(&addr, "addr", "", "IP, CIDR or domain to scan")
@@ -171,6 +173,7 @@ func runScan(args []string) {
 	fs.BoolVar(&enableIPv6, "46", false, "Enable IPv6")
 	fs.StringVar(&url, "url", "", "Crawl domain list from URL")
 	fs.BoolVar(&skipDownload, "skip-download", false, "Continue even if data file download fails")
+	fs.BoolVar(&infinite, "infinite", false, "When -addr is a single IP/domain, continuously scan neighbour IPs (default: single host)")
 	_ = fs.Parse(args)
 
 	setupLogging(verbose)
@@ -251,7 +254,7 @@ func runScan(args []string) {
 			fs.PrintDefaults()
 			return
 		}
-		rawHosts := resolveHosts(addr, in, url, enableIPv6)
+		rawHosts := resolveHosts(addr, in, url, enableIPv6, infinite)
 		if rawHosts == nil {
 			return
 		}
@@ -424,9 +427,9 @@ func writeTempFile(content []byte, name string) string {
 	return f.Name()
 }
 
-func resolveHosts(addr, in, url string, enableIPv6 bool) <-chan types.Host {
+func resolveHosts(addr, in, url string, enableIPv6, infinite bool) <-chan types.Host {
 	if addr != "" {
-		return scanner.IterateAddr(addr, enableIPv6)
+		return scanner.IterateAddrInfinite(addr, enableIPv6, infinite)
 	}
 	if in != "" {
 		f, err := os.Open(in)

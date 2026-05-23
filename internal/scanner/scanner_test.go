@@ -187,9 +187,50 @@ func TestValidateDomainName(t *testing.T) {
 	}
 }
 
+func TestIterateAddrInfinite_SingleHostByDefault(t *testing.T) {
+	// Without infinite=true, a single IP should yield exactly one host then close.
+	ch := IterateAddrInfinite("127.0.0.1", false, false)
+
+	count := 0
+	timeout := time.After(2 * time.Second)
+loop:
+	for {
+		select {
+		case _, ok := <-ch:
+			if !ok {
+				break loop
+			}
+			count++
+		case <-timeout:
+			t.Fatalf("channel did not close within 2s; received %d hosts", count)
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected 1 host in non-infinite mode, got %d", count)
+	}
+}
+
+func TestIterateAddrInfinite_InfiniteFlag(t *testing.T) {
+	// With infinite=true, the producer keeps emitting neighbour IPs.
+	ch := IterateAddrInfinite("10.0.0.5", false, true)
+
+	const want = 5
+	got := 0
+	deadline := time.After(2 * time.Second)
+	for got < want {
+		select {
+		case _, ok := <-ch:
+			if !ok {
+				t.Fatalf("channel closed early after %d hosts", got)
+			}
+			got++
+		case <-deadline:
+			t.Fatalf("did not get %d hosts within 2s (got %d)", want, got)
+		}
+	}
+}
+
 func TestIterateCtx_CIDRCancel(t *testing.T) {
-	// 10.0.0.0/16 yields ~65k IPs; cancelling context should stop the
-	// producer goroutine instead of blocking forever on send.
 	ctx, cancel := context.WithCancel(context.Background())
 	ch := IterateCtx(ctx, strings.NewReader("10.0.0.0/16\n"), false)
 

@@ -85,6 +85,10 @@ func IterateCtx(ctx context.Context, reader io.Reader, enableIPv6 bool) <-chan t
 }
 
 func IterateAddr(addr string, enableIPv6 bool) <-chan types.Host {
+	return IterateAddrInfinite(addr, enableIPv6, false)
+}
+
+func IterateAddrInfinite(addr string, enableIPv6, infinite bool) <-chan types.Host {
 	hostChan := make(chan types.Host)
 	_, _, err := net.ParseCIDR(addr)
 	if err == nil {
@@ -100,14 +104,18 @@ func IterateAddr(addr string, enableIPv6 bool) <-chan types.Host {
 		}
 	}
 	go func() {
-		slog.Info("Enable infinite mode", "init", ip.String())
-		lowIP := ip
-		highIP := ip
+		defer close(hostChan)
 		hostChan <- types.Host{
 			IP:     ip,
 			Origin: addr,
 			Type:   types.HostTypeIP,
 		}
+		if !infinite {
+			return
+		}
+		slog.Info("Enable infinite mode", "init", ip.String())
+		lowIP := ip
+		highIP := ip
 		for i := 0; i < math.MaxInt; i++ {
 			if i%2 == 0 {
 				lowIP = NextIP(lowIP, false)
