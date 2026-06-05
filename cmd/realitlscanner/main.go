@@ -47,6 +47,7 @@ func routeSubcommand(cmd string, args []string) int {
 }
 
 func runLegacy(args []string) {
+	args, bgpPeek := extractHiddenFlag(args, "-bgp-peek")
 	fs := flag.NewFlagSet("realitlscanner", flag.ExitOnError)
 	var (
 		addr         string
@@ -98,6 +99,8 @@ func runLegacy(args []string) {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
+
+	maybeBGPPeek(ctx, addr, bgpPeek, enableIPv6)
 
 	hostChan := resolveHosts(ctx, addr, in, url, enableIPv6, infinite, bgp, maxHosts, yes)
 	if hostChan == nil {
@@ -234,6 +237,7 @@ func formatScanLine(r *types.ScanResult, total int64, startedAt time.Time) strin
 }
 
 func runScan(args []string) {
+	args, bgpPeek := extractHiddenFlag(args, "-bgp-peek")
 	// Pre-sort: move non-flag arguments (domains) to the end so flag.Parse works correctly
 	args = reorderArgs(args)
 
@@ -358,6 +362,7 @@ func runScan(args []string) {
 			fs.PrintDefaults()
 			return
 		}
+		maybeBGPPeek(ctx, addr, bgpPeek, enableIPv6)
 		rawHosts := resolveHosts(ctx, addr, in, url, enableIPv6, infinite, bgp, maxHosts, yes)
 		if rawHosts == nil {
 			return
@@ -648,6 +653,40 @@ func hostsToChannel(hosts []types.Host) <-chan types.Host {
 	}
 	close(ch)
 	return ch
+}
+
+// extractHiddenFlag removes a bare boolean flag token from args, returning the
+// remaining args and whether it was present. Used for source-only flags that
+// are deliberately kept out of the FlagSet (and thus out of -h usage).
+func extractHiddenFlag(args []string, name string) (remaining []string, present bool) {
+	for _, a := range args {
+		if a == name {
+			present = true
+			continue
+		}
+		remaining = append(remaining, a)
+	}
+	return remaining, present
+}
+
+// maybeBGPPeek is the hidden `-bgp-peek` easter egg: log a one-line preview of
+// how many neighbours bgp.tools has seen in the target's /24. Purely
+// informational — it never gates scanning. Undocumented on purpose.
+func maybeBGPPeek(ctx context.Context, addr string, enabled, enableIPv6 bool) {
+	if !enabled || addr == "" {
+		return
+	}
+	res, err := scanner.PeekPrefixUsageForAddr(ctx, addr, enableIPv6)
+	if err != nil {
+		slog.Warn("bgp-peek failed", "addr", addr, "err", err)
+		return
+	}
+	src := "network"
+	if res.Cached {
+		src = "cache"
+	}
+	fmt.Fprintf(os.Stderr, "[%s] 🥚 pfximg: %s 约 %d/%d 邻居在用 (%s, 预览, 不代表可握手)\n",
+		time.Now().Format("15:04:05"), res.CIDR, res.Active, res.Total, src)
 }
 
 func openOutput(path string) (io.Writer, io.Closer, error) {
