@@ -31,6 +31,7 @@ type jsonResult struct {
 	HotSite   *types.HotSiteResult   `json:"hot_site,omitempty"`
 	Redirect  *types.RedirectResult  `json:"redirect,omitempty"`
 	CertValid *types.CertValidResult `json:"cert_valid,omitempty"`
+	Block     *types.BlockResult     `json:"block,omitempty"`
 	Feasible  bool                   `json:"feasible"`
 	Score     int                    `json:"score,omitempty"`
 	Error     string                 `json:"error,omitempty"`
@@ -134,6 +135,7 @@ func toJSONResult(result *types.ScanResult) jsonResult {
 		HotSite:   result.HotSite,
 		Redirect:  result.Redirect,
 		CertValid: result.CertValid,
+		Block:     result.Block,
 		Feasible:  result.Feasible,
 		Score:     result.Score,
 		Error:     result.Error,

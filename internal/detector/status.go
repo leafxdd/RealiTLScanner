@@ -64,7 +64,9 @@ func (d *StatusDetector) Detect(ctx context.Context, result *types.ScanResult) e
 	}
 	defer resp.Body.Close()
 
-	result.Redirect = &types.RedirectResult{StatusCode: resp.StatusCode}
+	server := resp.Header.Get("Server")
+	result.Redirect = &types.RedirectResult{StatusCode: resp.StatusCode, Server: server}
+	vetoIfProxyServer(result, server)
 	return nil
 }
 

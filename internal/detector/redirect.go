@@ -72,12 +72,16 @@ func (d *RedirectDetector) Detect(ctx context.Context, result *types.ScanResult)
 	if redirects {
 		target = resp.Header.Get("Location")
 	}
+	server := resp.Header.Get("Server")
 
 	result.Redirect = &types.RedirectResult{
 		Redirects:  redirects,
 		Target:     target,
 		StatusCode: resp.StatusCode,
+		Server:     server,
 	}
+	// A self-identifying proxy panel (x-ui/sing-box/...) is not a usable dest.
+	vetoIfProxyServer(result, server)
 	return nil
 }
 

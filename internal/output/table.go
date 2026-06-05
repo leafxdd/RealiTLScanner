@@ -348,6 +348,8 @@ func formatNote(result *types.ScanResult) (plain, colored string) {
 		switch result.Block.Reason {
 		case "proxy_keyword":
 			plain = "代理"
+		case "proxy_server":
+			plain = "面板"
 		case "dynamic_dns":
 			plain = "动态DNS"
 		case "nas":

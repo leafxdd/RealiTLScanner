@@ -29,6 +29,7 @@ type RedirectResult struct {
 	Redirects  bool   `json:"redirects"`
 	Target     string `json:"target,omitempty"`
 	StatusCode int    `json:"status_code"`
+	Server     string `json:"server,omitempty"` // HTTP Server response header (probe phase)
 }
 
 type HotSiteResult struct {

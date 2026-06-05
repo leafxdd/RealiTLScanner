@@ -334,6 +334,32 @@ func TestJSONWriter_ExtendedFields_Populated(t *testing.T) {
 	}
 }
 
+func TestJSONWriter_BlockAndServer(t *testing.T) {
+	var buf bytes.Buffer
+	w := NewJSONWriter(&buf, Options{Pretty: false})
+	r := testResult()
+	r.Redirect = &types.RedirectResult{StatusCode: 200, Server: "x-ui"}
+	r.Block = &types.BlockResult{Hit: true, Reason: "proxy_server", Keywords: []string{"x-ui"}}
+	if err := w.WriteResult(r); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var out jsonOutput
+	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	got := out.Results[0]
+	if got.Block == nil || !got.Block.Hit || got.Block.Reason != "proxy_server" {
+		t.Errorf("Block missing/wrong in JSON: %+v", got.Block)
+	}
+	if got.Redirect == nil || got.Redirect.Server != "x-ui" {
+		t.Errorf("Redirect.Server missing/wrong in JSON: %+v", got.Redirect)
+	}
+}
+
 func TestTableWriter_TruncatesByRune(t *testing.T) {
 	// 多字节中文字符若按 byte 截断会破坏 UTF-8。
 	long := strings.Repeat("中", 40) // 40 runes / 120 bytes
