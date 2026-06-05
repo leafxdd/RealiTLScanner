@@ -15,19 +15,19 @@ import (
 )
 
 // synthHeatmap builds a 16×16 RGBA PNG with the first activeCells pixels
-// (row-major) coloured and the rest white — a stand-in for a bgp.tools /24
-// heatmap with that many cells "in use".
+// (row-major) coloured bgp.tools-blue on a black background — a stand-in for a
+// /24 heatmap where that many addresses have been "seen".
 func synthHeatmap(t *testing.T, activeCells int) []byte {
 	t.Helper()
 	img := image.NewRGBA(image.Rect(0, 0, 16, 16))
-	white := color.RGBA{R: 255, G: 255, B: 255, A: 255}
-	used := color.RGBA{R: 20, G: 80, B: 200, A: 255}
+	bg := color.RGBA{R: 0, G: 0, B: 0, A: 255}      // black = no data
+	used := color.RGBA{R: 0, G: 3, B: 255, A: 255}  // blue = seen
 	for y := 0; y < 16; y++ {
 		for x := 0; x < 16; x++ {
 			if y*16+x < activeCells {
 				img.Set(x, y, used)
 			} else {
-				img.Set(x, y, white)
+				img.Set(x, y, bg)
 			}
 		}
 	}
@@ -112,11 +112,11 @@ func TestIsActiveCell(t *testing.T) {
 		c    color.Color
 		want bool
 	}{
-		{"opaque blue is active", color.RGBA{R: 20, G: 80, B: 200, A: 255}, true},
-		{"white background is empty", color.RGBA{R: 255, G: 255, B: 255, A: 255}, false},
-		{"near-white background is empty", color.RGBA{R: 250, G: 248, B: 252, A: 255}, false},
-		{"transparent is empty", color.RGBA{R: 20, G: 80, B: 200, A: 0}, false},
-		{"opaque black is active", color.RGBA{R: 0, G: 0, B: 0, A: 255}, true},
+		{"black background is no-data", color.RGBA{R: 0, G: 0, B: 0, A: 255}, false},
+		{"near-black is no-data", color.RGBA{R: 10, G: 10, B: 10, A: 255}, false},
+		{"bgp.tools blue is seen", color.RGBA{R: 0, G: 3, B: 255, A: 255}, true},
+		{"dense red is seen", color.RGBA{R: 255, G: 0, B: 0, A: 255}, true},
+		{"transparent is no-data", color.RGBA{R: 0, G: 3, B: 255, A: 0}, false},
 	}
 	for _, tc := range cases {
 		if got := isActiveCell(tc.c); got != tc.want {
@@ -126,14 +126,14 @@ func TestIsActiveCell(t *testing.T) {
 }
 
 func TestCountActiveGrid_ScaleInvariant(t *testing.T) {
-	// A 160×160 image (10px per cell) with the top-left 4×4 cells filled must
-	// still count as 16 active cells under a 16×16 grid.
+	// A 160×160 image (10px per cell) on a black background with the top-left
+	// 4×4 cells filled blue must count as 16 seen cells under a 16×16 grid.
 	img := image.NewRGBA(image.Rect(0, 0, 160, 160))
-	white := color.RGBA{R: 255, G: 255, B: 255, A: 255}
-	used := color.RGBA{R: 10, G: 10, B: 10, A: 255}
+	bg := color.RGBA{R: 0, G: 0, B: 0, A: 255}     // black = no data
+	used := color.RGBA{R: 0, G: 3, B: 255, A: 255} // blue = seen
 	for y := 0; y < 160; y++ {
 		for x := 0; x < 160; x++ {
-			img.Set(x, y, white)
+			img.Set(x, y, bg)
 		}
 	}
 	for cy := 0; cy < 4; cy++ {

@@ -165,17 +165,19 @@ func countActiveGrid(img image.Image, gridN int) int {
 	return active
 }
 
-// isActiveCell classifies a heatmap pixel: transparent or near-white is the
-// empty background; anything else is an "in use" cell. Best-effort, since the
-// exact bgp.tools palette is not officially specified.
+// isActiveCell classifies a bgp.tools heatmap pixel. The heatmap's empty
+// background is black (rgba 0,0,0) — bgp.tools' internet-wide ping scan saw no
+// host there — while any address it has seen is coloured (blue for sparse
+// through to red for dense). So an opaque, non-black cell is a seen neighbour;
+// black or transparent means no data. Verified against real /24 images: an
+// all-black /24 → 0 seen, a 234-blue /24 → 234 seen.
 func isActiveCell(c color.Color) bool {
 	r, g, bl, a := c.RGBA() // each 0..0xFFFF
 	if a < 0x8000 {
-		return false // mostly transparent → empty
+		return false // transparent → no data
 	}
-	const nearWhite = 0xE000
-	if r > nearWhite && g > nearWhite && bl > nearWhite {
-		return false // background
-	}
-	return true
+	// Black background → no data. Any colour (even a dim blue) clears this
+	// floor; pure/near black stays under it.
+	const darkFloor = 0x2000 // ~12.5%
+	return r > darkFloor || g > darkFloor || bl > darkFloor
 }
