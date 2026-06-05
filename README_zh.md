@@ -10,7 +10,10 @@
 - 可配置并发数的高速扫描
 - GeoIP 地理位置查询（数据目录可配置）
 - **域名可用性检测**：CDN、GFW、TLS 验证（SAN 优先 + 通配符 `VerifyHostname`）、热门网站、重定向、HTTP 状态
+- **去伪黑名单**：一票否决代理关键词域名、代理面板（通过 `Server` 头识别 x-ui / sing-box 等）、动态DNS / NAS 后缀；廉价 TLD 作为软信号（扣 1 星）——结果体现在「备注」列
 - **SSRF 安全防护**：redirect/status 探测器拒绝 loopback / private / link-local / 云元数据地址
+- **偷邻居发现（`-bgp`）**：把单个 `-addr` IP 展开成其所属 AS 宣告的 BGP 前缀（Team Cymru 主 + RIPEstat 兜底）整段扫描，受 `-max-hosts` 上限保护（默认 4096，超限需 `-yes`）
+- **两段式扫描（`-probe-first`）**：先用高并发 TCP 探活筛掉死/防火墙主机，再对存活主机做完整 TLS 扫描；`-bgp` 时自动开启
 - **星级评分**（0-5 星）：综合握手时间、CDN、热门度、证书有效期
 - **格式化彩色表格输出**（非 TTY 或 `NO_COLOR` 自动关闭着色）
 - **扫描统计**：summary 输出 `attempted / tls_failed / dropped` 计数
@@ -66,6 +69,9 @@ GOOS=windows GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o RealiTLScanner-
 # 指定输出文件（默认：out.csv）：
 ./RealiTLScanner -addr 1.2.3.0/24 -out results.csv
 
+# 从单个 IP/域名向外持续扫描相邻 IP（默认只扫这一个主机）：
+./RealiTLScanner -addr 1.2.3.4 -infinite
+
 # 下载失败时继续运行：
 ./RealiTLScanner -addr 1.2.3.0/24 -skip-download
 ```
@@ -101,17 +107,18 @@ GOOS=windows GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o RealiTLScanner-
 #### 输出示例
 
 ```
----------------------------------------------------------------------------------------------------------------------
-最终域名                           基础条件     握手时间       证书时间       CDN      热门     推荐     页面状态
----------------------------------------------------------------------------------------------------------------------
-yz.iosjy.top                       ✓            341ms          69天           无       -        ****     200
-blog.bingserve.xyz                 ✓            447ms          83天           无       -        ****     200
-yingyaozw.com                      ✓            439ms          246天          无       -        ****     200
-code.memoncler.com                 ✓            783ms          5天            无       -        ***      -
-o03.cc                             ✗            1624ms         88天           无       -        ***      405
+------------------------------------------------------------------------------------------------------------------------------
+最终域名                           基础条件     握手时间       证书时间       CDN      热门     推荐     页面状态     备注
+------------------------------------------------------------------------------------------------------------------------------
+cdn77.akamai-edge.net              ✓            142ms          312天          无       -        *****    200
+shop.bingserve.com                 ✓            274ms          83天           无       -        ****     200
+blog.example.xyz                   ✓            210ms          120天          无       -        ***      200          廉价
+vless.cheapvps.top                 ✗            156ms          88天           无       -                 200          代理
+sub.host-panel.net                 ✗            203ms          41天           无       -                 200          面板
+home.duckdns.org                   ✗            318ms          60天           无       -                 -            动态DNS
 
----------------------------------------------------------------------------------------------------------------------
-检测完成: 31 个域名, 29 个适合 (93.5%), 耗时 12.9s
+------------------------------------------------------------------------------------------------------------------------------
+检测完成: 6 个域名, 3 个适合 (50.0%), 耗时 12.9s
 扫描统计: attempted=256  tls_failed=210  dropped=15
 ```
 
@@ -127,6 +134,7 @@ o03.cc                             ✗            1624ms         88天          
 | 热门 | 热门网站标记（✓ = 热门，- = 非热门） |
 | 推荐 | 星级评分 0-5，综合评估质量 |
 | 页面状态 | HTTP 状态码 |
+| 备注 | 去伪标记：代理（域名含代理关键词）/ 面板（`Server` 头识别 x-ui 等）/ 动态DNS / NAS / 廉价（廉价 TLD，软信号）；为空表示干净 |
 
 #### 星级评分标准
 
@@ -137,6 +145,37 @@ o03.cc                             ✗            1624ms         88天          
 | 未检测到 CDN | +1 |
 | 非热门网站 | +1 |
 | 证书有效期 ≥ 60 天 | +1 |
+
+> **去伪一票否决**（blocklist 检测器）：硬命中——域名含代理关键词、`Server` 头是代理面板（x-ui / sing-box / …）、或动态DNS / NAS 后缀——直接否决候选（`✗`，分数清零）。廉价 TLD（`.xyz` / `.top` / `.win` / …）只是软信号：仍判可用，但扣 1 星。
+
+### 偷邻居发现（BGP 前缀展开）
+
+不用猜 CIDR、也不用 `-infinite` 一个个试邻居——直接把单个 IP 展开成其源 AS 宣告的精确前缀来扫，这正是「偷邻居」的天然范围。基础模式和 `scan` 模式都支持。
+
+```bash
+# 把单个 IP 展开成其 BGP 公告前缀，整段扫描：
+./RealiTLScanner -addr 104.249.172.234 -bgp
+./RealiTLScanner scan -addr 104.249.172.234 -bgp
+
+# 展开后主机数超过上限（默认 4096）会拒绝，除非显式确认：
+./RealiTLScanner -addr 1.2.3.4 -bgp -max-hosts 1024          # 超过 1024 即拒绝
+./RealiTLScanner -addr 1.2.3.4 -bgp -yes                     # 放行超限展开
+
+# 两段式扫描：先做便宜的 TCP 探活，再做完整 TLS 扫描
+# （跳过死/防火墙主机，免得它们各自耗满 -timeout）。
+# -bgp 时自动开启；任意 IP/CIDR 扫描也可手动开启：
+./RealiTLScanner -addr 1.2.3.0/24 -probe-first
+```
+
+覆盖前缀来自公共路由采集器，经 Team Cymru 的 whois 服务解析（RIPEstat 兜底），因此可能是 `/22`、`/23` 或 `/24`，取决于该 AS 如何宣告其地址块——无需 API key。
+
+| 标志 | 作用 | 默认 |
+|------|------|------|
+| `-bgp` | 把 `-addr <ip>` 展开成其公告前缀，整段扫描 | 关 |
+| `-max-hosts N` | 展开前缀时的主机数上限，超限则中止，除非加 `-yes` | 4096 |
+| `-yes` | 展开超过 `-max-hosts` 时确认放行 | 关 |
+| `-probe-first` | 两段式扫描：完整 TLS 扫描前先做 TCP 探活预筛 | 关（`-bgp` 时自动开） |
+| `-infinite` | 从单个 IP/域名向外遍历相邻 IP（基础模式） | 关 |
 
 ### 单域名检测（`check` 命令）
 
@@ -188,6 +227,7 @@ docker run --rm realitlscanner scan apple.com www.tesla.com
 | `gfwlist.conf` | 仅 Scan | GFW 封锁检测 | [Loyalsoldier/clash-rules](https://github.com/Loyalsoldier/clash-rules) |
 | `cdn_keywords.txt` | 仅 Scan | CDN 检测 | 内置（编译嵌入） |
 | `hot_websites.txt` | 仅 Scan | 热门网站检测 | 内置（编译嵌入） |
+| `blocklist_keywords.txt` | 仅 Scan | 去伪黑名单（代理/动态DNS/NAS/廉价TLD） | 内置（编译嵌入） |
 
 - 基础模式下载：`Country.mmdb`
 - Scan 模式下载：`Country.mmdb` + `gfwlist.conf`
@@ -201,7 +241,8 @@ cmd/realitlscanner/     CLI 入口（子命令路由 + url-fetch 超时/大小�
 internal/
   types/                共享类型（Host、ScanResult、TLSInfo、CertValidResult）
   scanner/              TLS 扫描（ctx-aware）+ CSV 域名解析 + StrictDomainName 校验
-  detector/             检测器接口 + CDN/GFW/HotSite/Location/Redirect/Status/TLSCheck + 评分
+                        + BGP 前缀解析（Cymru/RIPEstat）+ TCP 探活预筛
+  detector/             检测器接口 + CDN/GFW/HotSite/Location/Redirect/Status/TLSCheck/Blocklist + 评分
                         + 安全目标网关（拒绝 loopback / private / 元数据地址）
   pipeline/             基于 Channel 的 扫描→检测→输出 流水线，带 attempted/tls_failed/dropped 统计
   output/               输出器（CSV、JSON、JSONL、表格）

@@ -10,7 +10,10 @@ A high-performance TLS certificate scanner with integrated Reality protocol doma
 - Concurrent scanning with configurable thread count
 - GeoIP location lookup (configurable data dir)
 - **Domain feasibility detection**: CDN, GFW, TLS validation (SAN + wildcard via `VerifyHostname`), hot website, redirect, HTTP status
+- **De-risk blocklist**: vetoes proxy-keyword cert domains, proxy panels (detected via the `Server` header — x-ui / sing-box / …), and dynamic-DNS / NAS suffixes; flags cheap TLDs as a soft (−1 star) signal — surfaced in the 备注 column
 - **SSRF-safe detector probes**: redirect/status detectors reject private, loopback, link-local, and metadata addresses
+- **Neighbour discovery (`-bgp`)**: expand a single `-addr` IP to its BGP-announced prefix (Team Cymru with RIPEstat fallback) and scan the whole prefix, bounded by `-max-hosts` (default 4096; raise the bar with `-yes`)
+- **Two-phase scan (`-probe-first`)**: a fast concurrent TCP liveness pre-filter weeds out dead/firewalled hosts before the expensive TLS scan; auto-enabled with `-bgp`
 - **Star rating** (0-5): handshake time, CDN, popularity, certificate validity
 - **Formatted table output** with color coding (auto-disabled on non-TTY / `NO_COLOR`)
 - **Scan statistics**: per-pipeline `attempted / tls_failed / dropped` counters surfaced in summary
@@ -66,6 +69,9 @@ Scan IP range and output domains to CSV file:
 # Save to file (default: out.csv):
 ./RealiTLScanner -addr 1.2.3.0/24 -out results.csv
 
+# Continuously scan neighbour IPs outward from a single IP/domain (default: just that one host):
+./RealiTLScanner -addr 1.2.3.4 -infinite
+
 # Continue even if GeoIP download fails:
 ./RealiTLScanner -addr 1.2.3.0/24 -skip-download
 ```
@@ -103,17 +109,18 @@ Note: Basic mode (without `scan`) only downloads `Country.mmdb`. The `scan` comm
 #### Output Example
 
 ```
----------------------------------------------------------------------------------------------------------------------
-最终域名                           基础条件     握手时间       证书时间       CDN      热门     推荐     页面状态
----------------------------------------------------------------------------------------------------------------------
-yz.iosjy.top                       ✓            341ms          69天           无       -        ****     200
-blog.bingserve.xyz                 ✓            447ms          83天           无       -        ****     200
-yingyaozw.com                      ✓            439ms          246天          无       -        ****     200
-code.memoncler.com                 ✓            783ms          5天            无       -        ***      -
-o03.cc                             ✗            1624ms         88天           无       -        ***      405
+------------------------------------------------------------------------------------------------------------------------------
+最终域名                           基础条件     握手时间       证书时间       CDN      热门     推荐     页面状态     备注
+------------------------------------------------------------------------------------------------------------------------------
+cdn77.akamai-edge.net              ✓            142ms          312天          无       -        *****    200
+shop.bingserve.com                 ✓            274ms          83天           无       -        ****     200
+blog.example.xyz                   ✓            210ms          120天          无       -        ***      200          廉价
+vless.cheapvps.top                 ✗            156ms          88天           无       -                 200          代理
+sub.host-panel.net                 ✗            203ms          41天           无       -                 200          面板
+home.duckdns.org                   ✗            318ms          60天           无       -                 -            动态DNS
 
----------------------------------------------------------------------------------------------------------------------
-检测完成: 31 个域名, 29 个适合 (93.5%), 耗时 12.9s
+------------------------------------------------------------------------------------------------------------------------------
+检测完成: 6 个域名, 3 个适合 (50.0%), 耗时 12.9s
 扫描统计: attempted=256  tls_failed=210  dropped=15
 ```
 
@@ -129,6 +136,7 @@ Color output is automatically disabled when stdout is not a TTY (redirected to a
 | 热门 | Popular website flag (✓ = hot, - = not) |
 | 推荐 | Star rating 0-5 based on overall quality |
 | 页面状态 | HTTP status code |
+| 备注 | De-risk flag: 代理 (proxy keyword) / 面板 (proxy panel via `Server` header) / 动态DNS / NAS / 廉价 (cheap TLD, soft) — blank means clean |
 
 #### Star Rating Criteria
 
@@ -139,6 +147,37 @@ Color output is automatically disabled when stdout is not a TTY (redirected to a
 | No CDN detected | +1 |
 | Not a popular/hot website | +1 |
 | Certificate valid ≥ 60 days | +1 |
+
+> **De-risk overrides** (blocklist detector): a hard hit — proxy keyword in the cert domain, a proxy-panel `Server` header (x-ui / sing-box / …), or a dynamic-DNS / NAS suffix — vetoes the candidate (`✗`, score forced to 0). A cheap TLD (`.xyz` / `.top` / `.win` / …) is only a soft signal: it stays feasible but loses one star.
+
+### Neighbour Discovery (BGP prefix expansion)
+
+Instead of guessing a CIDR or walking neighbours one-by-one with `-infinite`, expand a single IP to the exact prefix its origin AS announces and scan that — the natural "steal a neighbour" scope. Works in both basic and `scan` modes.
+
+```bash
+# Expand a single IP to its announced BGP prefix and scan all of it:
+./RealiTLScanner -addr 104.249.172.234 -bgp
+./RealiTLScanner scan -addr 104.249.172.234 -bgp
+
+# A prefix larger than the cap (default 4096 hosts) is refused unless you confirm:
+./RealiTLScanner -addr 1.2.3.4 -bgp -max-hosts 1024          # refuse if it expands past 1024
+./RealiTLScanner -addr 1.2.3.4 -bgp -yes                     # allow an oversized expansion
+
+# Two-phase scan: a cheap TCP liveness pre-filter before the full TLS scan
+# (skips dead/firewalled hosts so they don't each burn the full -timeout).
+# Auto-enabled with -bgp; request it explicitly for any IP/CIDR sweep:
+./RealiTLScanner -addr 1.2.3.0/24 -probe-first
+```
+
+The covering prefix is resolved from public route collectors via Team Cymru's whois service (with RIPEstat as a fallback), so it can be a `/22`, `/23` or `/24` depending on how the AS announces its space — no API key required.
+
+| Flag | Effect | Default |
+|------|--------|---------|
+| `-bgp` | Expand `-addr <ip>` to its announced prefix and scan the whole prefix | off |
+| `-max-hosts N` | Cap on hosts when expanding a prefix; exceeding it aborts unless `-yes` | 4096 |
+| `-yes` | Confirm scanning when an expansion exceeds `-max-hosts` | off |
+| `-probe-first` | Two-phase scan: TCP liveness pre-filter before the full TLS scan | off (auto-on with `-bgp`) |
+| `-infinite` | Walk neighbour IPs outward from a single IP/domain (basic mode) | off |
 
 ### Single Domain Check
 
@@ -190,6 +229,7 @@ Required data files are **automatically downloaded** on first run:
 | `gfwlist.conf` | Scan only | GFW block detection | [Loyalsoldier/clash-rules](https://github.com/Loyalsoldier/clash-rules) |
 | `cdn_keywords.txt` | Scan only | CDN detection | Built-in (embedded) |
 | `hot_websites.txt` | Scan only | Hot website detection | Built-in (embedded) |
+| `blocklist_keywords.txt` | Scan only | De-risk blocklist (proxy/dynamic-DNS/NAS/cheap-TLD) | Built-in (embedded) |
 
 - Basic mode downloads: `Country.mmdb`
 - Scan mode downloads: `Country.mmdb` + `gfwlist.conf`
@@ -203,7 +243,8 @@ cmd/realitlscanner/     CLI entry point (subcommand routing, url-fetch with time
 internal/
   types/                Shared types (Host, ScanResult, TLSInfo, CertValidResult)
   scanner/              TLS scanning (ctx-aware) + CSV domain parser + StrictDomainName validator
-  detector/             Detector interface + CDN/GFW/HotSite/Location/Redirect/Status/TLSCheck + scorer
+                        + BGP prefix resolution (Cymru/RIPEstat) + TCP liveness pre-filter
+  detector/             Detector interface + CDN/GFW/HotSite/Location/Redirect/Status/TLSCheck/Blocklist + scorer
                         + safe-target gate (loopback/private/metadata rejection)
   pipeline/             Channel-based scan→detect→output orchestration with attempted/failed/dropped stats
   output/               Output writers (CSV, JSON, JSONL, table)
