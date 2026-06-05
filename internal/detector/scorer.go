@@ -13,6 +13,12 @@ func ComputeScore(result *types.ScanResult) int {
 		return 0
 	}
 
+	// Hard blocklist hit (proxy panel / dynamic DNS / NAS) — disqualified
+	// outright, no stars.
+	if result.Block != nil && result.Block.Hit {
+		return 0
+	}
+
 	// TLS 1.3 + H2 + valid cert + SNI match (or N/A for IP scans)
 	if result.CertValid != nil && result.CertValid.Valid {
 		sniOK := result.CertValid.SNIMatch == nil || *result.CertValid.SNIMatch
@@ -45,6 +51,12 @@ func ComputeScore(result *types.ScanResult) int {
 		if daysLeft >= 60 {
 			score++
 		}
+	}
+
+	// Cheap / throwaway TLD — soft penalty, floored at 0. Not a hard veto:
+	// plenty of legitimate sites use .xyz/.top, so we only dock a star.
+	if result.Block != nil && result.Block.CheapTLD && score > 0 {
+		score--
 	}
 
 	return score

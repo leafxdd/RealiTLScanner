@@ -38,11 +38,10 @@ func TestTableHeaderSeparatorEnclosesHeader(t *testing.T) {
 		t.Errorf("expected tableSepLen (%d) to exceed header rune count (%d) due to CJK width",
 			tableSepLen, runes)
 	}
-	// 8 column labels (4 CJK each ×4) + (4 CJK each ×3) + (2 CJK each ×2) +
-	// pure ASCII "CDN" → header visual width is well-defined; pin it so
-	// future column changes force a re-check.
-	if got := tableSepLen; got != 117 {
-		t.Errorf("tableSepLen = %d, want 117 (regression: column layout changed without test update)", got)
+	// 9 column labels with CJK widths → header visual width is well-defined;
+	// pin it so future column changes force a re-check.
+	if got := tableSepLen; got != 126 {
+		t.Errorf("tableSepLen = %d, want 126 (regression: column layout changed without test update)", got)
 	}
 }
 
@@ -58,11 +57,12 @@ func TestRenderRow_AlignsRegardlessOfANSI(t *testing.T) {
 		"\x1b[32m无\x1b[0m",
 		"\x1b[31m✓\x1b[0m", // hot=true
 		"\x1b[33m***\x1b[0m",
-		"\x1b[32m200\x1b[0m", // status colored
+		"\x1b[32m200\x1b[0m",  // status colored
+		"\x1b[31m代理\x1b[0m", // note colored
 	)
-	// Plain row: hot and status are bare "-" (no ANSI). The old code
+	// Plain row: hot, status and note are bare (no ANSI). The old code
 	// over-padded these cells by ~9 cells, pushing later columns right.
-	plain := renderRow("example.com", "✗", "8ms", "101天", "无", "-", "***", "-")
+	plain := renderRow("example.com", "✗", "8ms", "101天", "无", "-", "***", "-", "")
 
 	visibleColored := stringVisualWidth(ansiRE.ReplaceAllString(colored, ""))
 	visiblePlain := stringVisualWidth(plain)

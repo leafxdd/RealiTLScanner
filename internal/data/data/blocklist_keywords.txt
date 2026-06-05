@@ -1,0 +1,55 @@
+# Blocklist for Reality dest candidates — domains unsuitable as "neighbours".
+# Format: each line is tagged. Lines starting with '#' or blank are ignored.
+#   kw:<substr>   proxy / panel signature, substring match on cert domain (HARD veto)
+#   dyn:<suffix>  dynamic-DNS suffix, exact domain-suffix match           (HARD veto)
+#   nas:<suffix>  NAS / private-device suffix, exact domain-suffix match  (HARD veto)
+#   tld:<suffix>  cheap / throwaway TLD, suffix match                     (SOFT, -1 star)
+#
+# NOTE: deliberately NOT including short ambiguous substrings like "hk" or "rfc"
+# — they over-match legitimate domains (e.g. bank.com.hk).
+
+# --- proxy / panel signatures (HARD) ---
+kw:vless
+kw:vmess
+kw:x-ui
+kw:xui
+kw:3x-ui
+kw:sing-box
+kw:singbox
+kw:v2ray
+kw:v2board
+kw:trojan
+kw:hysteria
+kw:shadowsocks
+kw:jichang
+kw:airport
+kw:proxypanel
+
+# --- dynamic DNS (HARD) ---
+dyn:.nip.io
+dyn:.sslip.io
+dyn:.plesk.page
+dyn:.ddns.net
+dyn:.duckdns.org
+dyn:.no-ip.com
+dyn:.no-ip.org
+dyn:.dynu.com
+dyn:.dynv6.net
+dyn:.freedns.afraid.org
+
+# --- NAS / private devices (HARD) ---
+nas:.quickconnect.to
+nas:.synology.me
+nas:.myds.me
+nas:.diskstation.me
+nas:.dscloud.me
+
+# --- cheap / throwaway TLDs (SOFT, -1 star only) ---
+tld:.xyz
+tld:.top
+tld:.win
+tld:.lol
+tld:.sbs
+tld:.click
+tld:.cyou
+tld:.icu

@@ -36,6 +36,16 @@ type HotSiteResult struct {
 	Category string `json:"category,omitempty"`
 }
 
+// BlockResult flags a cert domain that is unsuitable as a Reality dest target.
+// Hit (proxy panel / dynamic-DNS / NAS) is a hard disqualification; CheapTLD is
+// a soft signal that only lowers the star score.
+type BlockResult struct {
+	Hit      bool     `json:"hit"`
+	Reason   string   `json:"reason,omitempty"` // proxy_keyword | dynamic_dns | nas
+	Keywords []string `json:"keywords,omitempty"`
+	CheapTLD bool     `json:"cheap_tld,omitempty"`
+}
+
 // CertValidResult reflects basic TLS feasibility from the scanner's point of
 // view — TLS 1.3 + h2 ALPN + non-empty CertDomain/Issuer — and whether the
 // SNI passed to the handshake matches the leaf cert (via x509.VerifyHostname).
@@ -63,6 +73,7 @@ type ScanResult struct {
 	Redirect  *RedirectResult  `json:"redirect,omitempty"`
 	HotSite   *HotSiteResult   `json:"hot_site,omitempty"`
 	CertValid *CertValidResult `json:"cert_valid,omitempty"`
+	Block     *BlockResult     `json:"block,omitempty"`
 
 	Feasible bool   `json:"feasible"`
 	Score    int    `json:"score,omitempty"`

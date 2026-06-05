@@ -7,3 +7,6 @@ var EmbeddedCDNKeywords []byte
 
 //go:embed data/hot_websites.txt
 var EmbeddedHotWebsites []byte
+
+//go:embed data/blocklist_keywords.txt
+var EmbeddedBlocklist []byte

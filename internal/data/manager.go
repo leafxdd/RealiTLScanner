@@ -59,6 +59,11 @@ func NewDataManager(baseDir string) *DataManager {
 		State:    StateReady,
 		Embedded: EmbeddedHotWebsites,
 	}
+	dm.files["blocklist"] = &ManagedFile{
+		Name:     "blocklist",
+		State:    StateReady,
+		Embedded: EmbeddedBlocklist,
+	}
 	dm.files["gfwlist"] = &ManagedFile{
 		Name:        "gfwlist",
 		State:       StateMissing,

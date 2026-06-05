@@ -80,6 +80,7 @@ const (
 	colHotW    = 8
 	colRecW    = 8
 	colStatusW = 12
+	colNoteW   = 8
 )
 
 var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
@@ -119,10 +120,10 @@ func padVisualRight(s string, width int) string {
 	return s + strings.Repeat(" ", width-have)
 }
 
-// renderRow joins eight pre-built cells with single-space delimiters,
+// renderRow joins nine pre-built cells with single-space delimiters,
 // padding each to its column's visual cell width. ANSI escapes inside
 // cells are preserved but ignored for width.
-func renderRow(domain, basic, hs, cert, cdn, hot, rec, status string) string {
+func renderRow(domain, basic, hs, cert, cdn, hot, rec, status, note string) string {
 	return padVisualRight(domain, colDomainW) + " " +
 		padVisualRight(basic, colBasicW) + " " +
 		padVisualRight(hs, colHsW) + " " +
@@ -130,7 +131,8 @@ func renderRow(domain, basic, hs, cert, cdn, hot, rec, status string) string {
 		padVisualRight(cdn, colCDNW) + " " +
 		padVisualRight(hot, colHotW) + " " +
 		padVisualRight(rec, colRecW) + " " +
-		padVisualRight(status, colStatusW)
+		padVisualRight(status, colStatusW) + " " +
+		padVisualRight(note, colNoteW)
 }
 
 // tableHeader is the single source of truth for column layout. The dash
@@ -140,7 +142,7 @@ func renderRow(domain, basic, hs, cert, cdn, hot, rec, status string) string {
 var (
 	tableHeader = renderRow(
 		"最终域名", "基础条件", "握手时间", "证书时间",
-		"CDN", "热门", "推荐", "页面状态")
+		"CDN", "热门", "推荐", "页面状态", "备注")
 	tableSepLen = stringVisualWidth(tableHeader)
 )
 
@@ -230,11 +232,13 @@ func (tw *TableWriter) WriteResult(result *types.ScanResult) {
 		statusPlain = "-"
 	}
 
-	termLine := renderRow(domain, baseStr, hsStr, certStr, cdnStr, hotStr, starsStr, statusStr)
+	notePlain, noteStr := formatNote(result)
+
+	termLine := renderRow(domain, baseStr, hsStr, certStr, cdnStr, hotStr, starsStr, statusStr, noteStr)
 	tw.writeTerm(termLine + "\n")
 
 	if tw.fileW != nil {
-		fileLine := renderRow(domain, basePlain, hsPlain, certPlain, cdnPlain, hotPlain, stars, statusPlain)
+		fileLine := renderRow(domain, basePlain, hsPlain, certPlain, cdnPlain, hotPlain, stars, statusPlain, notePlain)
 		fmt.Fprintln(tw.fileW, fileLine)
 	}
 }
@@ -330,4 +334,31 @@ func formatStatus(code int) string {
 		return colorize(s, colorBlue, true)
 	}
 	return colorize(s, colorRed, true)
+}
+
+// formatNote renders the 备注 column: the most important disqualifier for a
+// Reality dest candidate. Hard blocklist hits (proxy panel / dynamic DNS / NAS)
+// are shown in red; a cheap TLD is a soft yellow hint. Returns (plain, colored)
+// so file output stays ANSI-free.
+func formatNote(result *types.ScanResult) (plain, colored string) {
+	if result.Block == nil {
+		return "", ""
+	}
+	if result.Block.Hit {
+		switch result.Block.Reason {
+		case "proxy_keyword":
+			plain = "代理"
+		case "dynamic_dns":
+			plain = "动态DNS"
+		case "nas":
+			plain = "NAS"
+		default:
+			plain = "屏蔽"
+		}
+		return plain, colorize(plain, colorRed, true)
+	}
+	if result.Block.CheapTLD {
+		return "廉价", colorize("廉价", colorYellow, true)
+	}
+	return "", ""
 }

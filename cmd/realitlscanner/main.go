@@ -483,12 +483,14 @@ func buildDetectors(dm *data.DataManager, geoReader *geo.Geo, filter string) []d
 	cdnPath, _ := dm.GetPath("cdn_keywords")
 	hotPath, _ := dm.GetPath("hot_websites")
 	gfwPath, _ := dm.GetPath("gfwlist")
+	blockPath, _ := dm.GetPath("blocklist")
 
 	dets := []detector.Detector{
 		detector.NewTLSCheckDetector(),
 		detector.NewCDNDetector(cdnPath),
 		detector.NewGFWDetector(gfwPath),
 		detector.NewHotSiteDetector(hotPath),
+		detector.NewBlocklistDetector(blockPath),
 		detector.NewLocationDetector(geoReader),
 		detector.NewRedirectDetector(5 * time.Second),
 		detector.NewStatusDetector(5 * time.Second),
