@@ -18,10 +18,13 @@ import (
 // --- Hidden easter egg: bgp.tools /pfximg heatmap peek ---------------------
 //
 // NOT documented in the README — only visible to people reading the source.
-// `-bgp-peek` is default-OFF and opt-in. It downloads the bgp.tools heatmap PNG
-// for the /24 covering a target IP and counts the cells bgp.tools has "seen" in
-// use, as a cheap "is this /24 worth scanning" preview. It is a hint, NOT a
-// substitute for a real TLS probe.
+// `-bgp-peek` is default-OFF and opt-in. It resolves a target IP's announced
+// prefix (via ResolvePrefix — /24, /23, /22, /19, … whatever the AS announces),
+// downloads bgp.tools' heatmap PNG for it, and counts how many addresses
+// bgp.tools has "seen", as a cheap "is this prefix worth scanning" preview. It
+// is a hint, NOT a substitute for a real TLS probe — pfximg reflects bgp.tools'
+// ICMP-ping view, so an all-black prefix can still host pingable-but-firewalled
+// servers.
 //
 // Legitimacy guardrails (all deliberate, do not remove):
 //   - default OFF + explicit opt-in (the user turning it on accepts the behaviour)
@@ -37,24 +40,51 @@ var (
 	pfximgCacheDir = "" // empty → <os.TempDir()>/realitls-pfximg
 )
 
-// PeekResult summarises a /24 heatmap peek.
+// PeekResult summarises a prefix heatmap peek.
 type PeekResult struct {
-	CIDR   string // the /24 that was peeked, e.g. "1.2.3.0/24"
-	Active int    // cells bgp.tools shows as in use
-	Total  int    // cells in the grid (256 for a /24)
+	CIDR   string // the prefix that was peeked, e.g. "43.159.32.0/19"
+	Active int    // addresses bgp.tools has seen in use (non-black pixels)
+	Total  int    // addresses in the prefix
 	Cached bool   // served from the local cache rather than the network
 }
 
-// PeekPrefixUsage downloads the bgp.tools pfximg heatmap for the /24 covering
-// ip and estimates how many of its 256 addresses bgp.tools has seen in use.
-// IPv4 only — pfximg is a /24 heatmap. Best-effort preview hint.
+// peekMaxAddrs caps how large a prefix we will peek. bgp.tools renders one
+// pixel per address (padding odd-host-bit prefixes with black), so a /16 is a
+// 256×256 image — fine. Anything bigger isn't useful for neighbour discovery
+// and risks bgp.tools switching to an aggregated /24-per-pixel rendering, where
+// the per-address count no longer holds.
+const peekMaxAddrs = 1 << 16 // /16
+
+// PeekPrefixUsage downloads the bgp.tools pfximg heatmap for the prefix that ip
+// is announced under (resolved via ResolvePrefix — could be /24, /23, /22, /19,
+// …) and counts how many of its addresses bgp.tools has seen in use. IPv4 only.
+// Best-effort preview hint, NOT a substitute for a real probe.
 func PeekPrefixUsage(ctx context.Context, ip netip.Addr) (PeekResult, error) {
 	if !ip.IsValid() || !ip.Is4() {
 		return PeekResult{}, fmt.Errorf("pfximg peek needs an IPv4 address, got %q", ip)
 	}
-	slash24 := netip.PrefixFrom(ip, 24).Masked()
-	cidr := slash24.String()
+	info, err := ResolvePrefix(ctx, ip)
+	if err != nil {
+		return PeekResult{}, fmt.Errorf("resolve prefix for peek: %w", err)
+	}
+	return peekPrefix(ctx, info.Prefix)
+}
 
+// peekPrefix fetches and counts a single prefix's heatmap. bgp.tools paints one
+// pixel per address — coloured (blue→red) if it has seen the address, black if
+// not — and pads odd-host-bit prefixes (e.g. /23, /19) with extra black to a
+// square canvas. Since padding is black, counting every non-black pixel yields
+// the exact "seen" count regardless of prefix size; Total is the prefix's
+// address count (not the padded pixel count).
+func peekPrefix(ctx context.Context, prefix netip.Prefix) (PeekResult, error) {
+	if !prefix.IsValid() || !prefix.Addr().Is4() {
+		return PeekResult{}, fmt.Errorf("pfximg peek needs an IPv4 prefix, got %q", prefix)
+	}
+	total := PrefixAddrCount(prefix)
+	if total > peekMaxAddrs {
+		return PeekResult{}, fmt.Errorf("prefix %s too large to peek (%d > %d addresses)", prefix, total, peekMaxAddrs)
+	}
+	cidr := prefix.String()
 	data, cached, err := fetchPfximg(ctx, cidr)
 	if err != nil {
 		return PeekResult{}, err
@@ -63,18 +93,17 @@ func PeekPrefixUsage(ctx context.Context, ip netip.Addr) (PeekResult, error) {
 	if err != nil {
 		return PeekResult{}, fmt.Errorf("decode pfximg PNG: %w", err)
 	}
-	const gridN = 16 // 16×16 = 256 addresses in a /24
 	return PeekResult{
 		CIDR:   cidr,
-		Active: countActiveGrid(img, gridN),
-		Total:  gridN * gridN,
+		Active: countSeen(img),
+		Total:  total,
 		Cached: cached,
 	}, nil
 }
 
 // PeekPrefixUsageForAddr resolves addr (a literal IP, or a domain via DNS) to
-// an IPv4 address and peeks its /24. Thin entry point for the CLI hook so the
-// command layer needn't import net/netip.
+// an IPv4 address and peeks its announced prefix. Thin entry point for the CLI
+// hook so the command layer needn't import net/netip.
 func PeekPrefixUsageForAddr(ctx context.Context, addr string, enableIPv6 bool) (PeekResult, error) {
 	ip, err := netip.ParseAddr(addr)
 	if err != nil {
@@ -142,27 +171,21 @@ func pfximgCachePath(cidr string) string {
 	return filepath.Join(pfximgCacheDirResolved(), name)
 }
 
-// countActiveGrid samples the centre of each of gridN×gridN cells and counts
-// those that look "in use" (distinguishable from the empty background). It
-// samples cell centres rather than every pixel, so it is robust to the heatmap
-// being rendered at any pixel scale (1px/cell or many px/cell).
-func countActiveGrid(img image.Image, gridN int) int {
+// countSeen counts every non-black pixel in the heatmap. bgp.tools paints one
+// pixel per address (black = no data, coloured = seen) and pads odd-host-bit
+// prefixes with black, so a full-image non-black count equals the number of
+// addresses bgp.tools has seen — no grid assumption, works at any prefix size.
+func countSeen(img image.Image) int {
 	b := img.Bounds()
-	w, h := b.Dx(), b.Dy()
-	if w == 0 || h == 0 || gridN <= 0 {
-		return 0
-	}
-	active := 0
-	for gy := 0; gy < gridN; gy++ {
-		for gx := 0; gx < gridN; gx++ {
-			px := b.Min.X + (gx*w)/gridN + w/(2*gridN)
-			py := b.Min.Y + (gy*h)/gridN + h/(2*gridN)
-			if isActiveCell(img.At(px, py)) {
-				active++
+	seen := 0
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			if isActiveCell(img.At(x, y)) {
+				seen++
 			}
 		}
 	}
-	return active
+	return seen
 }
 
 // isActiveCell classifies a bgp.tools heatmap pixel. The heatmap's empty

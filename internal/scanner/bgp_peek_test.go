@@ -18,14 +18,22 @@ import (
 // (row-major) coloured bgp.tools-blue on a black background — a stand-in for a
 // /24 heatmap where that many addresses have been "seen".
 func synthHeatmap(t *testing.T, activeCells int) []byte {
+	return synthHeatmapSize(t, 16, activeCells)
+}
+
+// synthHeatmapSize is synthHeatmap for an arbitrary square canvas side, used to
+// stand in for the padded images bgp.tools renders for larger prefixes.
+func synthHeatmapSize(t *testing.T, side, activeCells int) []byte {
 	t.Helper()
-	img := image.NewRGBA(image.Rect(0, 0, 16, 16))
-	bg := color.RGBA{R: 0, G: 0, B: 0, A: 255}      // black = no data
-	used := color.RGBA{R: 0, G: 3, B: 255, A: 255}  // blue = seen
-	for y := 0; y < 16; y++ {
-		for x := 0; x < 16; x++ {
-			if y*16+x < activeCells {
+	img := image.NewRGBA(image.Rect(0, 0, side, side))
+	bg := color.RGBA{R: 0, G: 0, B: 0, A: 255}     // black = no data
+	used := color.RGBA{R: 0, G: 3, B: 255, A: 255} // blue = seen
+	painted := 0
+	for y := 0; y < side; y++ {
+		for x := 0; x < side; x++ {
+			if painted < activeCells {
 				img.Set(x, y, used)
+				painted++
 			} else {
 				img.Set(x, y, bg)
 			}
@@ -67,7 +75,7 @@ func TestPeekPrefixUsage_DownloadDecodeAndCache(t *testing.T) {
 	pfximgCacheDir = t.TempDir()
 	defer func() { pfximgBaseURL, pfximgCacheDir = oldBase, oldDir }()
 
-	res, err := PeekPrefixUsage(context.Background(), netip.MustParseAddr("1.2.3.4"))
+	res, err := peekPrefix(context.Background(), netip.MustParsePrefix("1.2.3.0/24"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +93,7 @@ func TestPeekPrefixUsage_DownloadDecodeAndCache(t *testing.T) {
 	}
 
 	// Second call must hit the local cache, not the network.
-	res2, err := PeekPrefixUsage(context.Background(), netip.MustParseAddr("1.2.3.99"))
+	res2, err := peekPrefix(context.Background(), netip.MustParsePrefix("1.2.3.0/24"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,30 +133,112 @@ func TestIsActiveCell(t *testing.T) {
 	}
 }
 
-func TestCountActiveGrid_ScaleInvariant(t *testing.T) {
-	// A 160×160 image (10px per cell) on a black background with the top-left
-	// 4×4 cells filled blue must count as 16 seen cells under a 16×16 grid.
-	img := image.NewRGBA(image.Rect(0, 0, 160, 160))
+func TestCountSeen(t *testing.T) {
+	// Black background with a known number of blue pixels → countSeen returns
+	// exactly that many (one pixel per address, padding is black). Uses a 32×32
+	// canvas like a /23's padded image.
+	img := image.NewRGBA(image.Rect(0, 0, 32, 32))
 	bg := color.RGBA{R: 0, G: 0, B: 0, A: 255}     // black = no data
 	used := color.RGBA{R: 0, G: 3, B: 255, A: 255} // blue = seen
-	for y := 0; y < 160; y++ {
-		for x := 0; x < 160; x++ {
+	for y := 0; y < 32; y++ {
+		for x := 0; x < 32; x++ {
 			img.Set(x, y, bg)
 		}
 	}
-	for cy := 0; cy < 4; cy++ {
-		for cx := 0; cx < 4; cx++ {
-			for y := cy * 10; y < cy*10+10; y++ {
-				for x := cx * 10; x < cx*10+10; x++ {
-					img.Set(x, y, used)
-				}
-			}
+	const want = 137
+	painted := 0
+	for y := 0; y < 32 && painted < want; y++ {
+		for x := 0; x < 32 && painted < want; x++ {
+			img.Set(x, y, used)
+			painted++
 		}
 	}
-	if got := countActiveGrid(img, 16); got != 16 {
-		t.Errorf("countActiveGrid = %d, want 16", got)
+	if got := countSeen(img); got != want {
+		t.Errorf("countSeen = %d, want %d", got, want)
 	}
-	if got := countActiveGrid(img, 0); got != 0 {
-		t.Errorf("countActiveGrid(gridN=0) = %d, want 0", got)
+
+	// All-black image → 0 seen (matches an all-black /24 like the user's VPS).
+	black := image.NewRGBA(image.Rect(0, 0, 16, 16))
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			black.Set(x, y, bg)
+		}
+	}
+	if got := countSeen(black); got != 0 {
+		t.Errorf("countSeen(all black) = %d, want 0", got)
+	}
+}
+
+func TestPeekPrefix_TotalFromPrefixNotPixels(t *testing.T) {
+	// A /23 is rendered on a padded 32×32 (1024px) canvas but spans only 512
+	// addresses — Total must come from the prefix, not the pixel count.
+	body := synthHeatmapSize(t, 32, 90) // 32×32, 90 blue pixels
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+	oldBase, oldDir := pfximgBaseURL, pfximgCacheDir
+	pfximgBaseURL = srv.URL
+	pfximgCacheDir = t.TempDir()
+	defer func() { pfximgBaseURL, pfximgCacheDir = oldBase, oldDir }()
+
+	res, err := peekPrefix(context.Background(), netip.MustParsePrefix("45.136.12.0/23"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Active != 90 {
+		t.Errorf("Active = %d, want 90 (non-black pixels)", res.Active)
+	}
+	if res.Total != 512 {
+		t.Errorf("Total = %d, want 512 (/23 address count, not 1024 pixels)", res.Total)
+	}
+}
+
+func TestPeekPrefix_RejectsHugePrefix(t *testing.T) {
+	// /8 is far past the peek cap — must refuse before any network call.
+	if _, err := peekPrefix(context.Background(), netip.MustParsePrefix("10.0.0.0/8")); err == nil {
+		t.Error("expected peekPrefix to refuse an oversized prefix")
+	}
+}
+
+func TestPeekPrefixUsage_UsesResolvedPrefix(t *testing.T) {
+	// End-to-end: ResolvePrefix (Cymru stub) yields the announced /22, and the
+	// peek must target that prefix — not a hardcoded /24 — with Total=1024.
+	addr, cleanup := startCymruStub(t,
+		"Bulk mode; whois.cymru.com\n12345 | 203.0.113.50 | 203.0.113.0/22 | US | arin | 2020-01-01 | EXAMPLE, US\n")
+	defer cleanup()
+	oldCymru := cymruWhoisAddr
+	cymruWhoisAddr = addr
+	defer func() { cymruWhoisAddr = oldCymru }()
+
+	body := synthHeatmapSize(t, 32, 500) // /22 → padded 32×32, 500 blue
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+	oldBase, oldDir := pfximgBaseURL, pfximgCacheDir
+	pfximgBaseURL = srv.URL
+	pfximgCacheDir = t.TempDir()
+	defer func() { pfximgBaseURL, pfximgCacheDir = oldBase, oldDir }()
+
+	res, err := PeekPrefixUsage(context.Background(), netip.MustParseAddr("203.0.113.50"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.CIDR != "203.0.113.0/22" {
+		t.Errorf("CIDR = %q, want the resolved 203.0.113.0/22", res.CIDR)
+	}
+	if res.Total != 1024 {
+		t.Errorf("Total = %d, want 1024 (/22)", res.Total)
+	}
+	if res.Active != 500 {
+		t.Errorf("Active = %d, want 500", res.Active)
+	}
+	if !strings.Contains(gotPath, "203.0.113.0/22") {
+		t.Errorf("pfximg path = %q, want it to target the /22", gotPath)
 	}
 }
