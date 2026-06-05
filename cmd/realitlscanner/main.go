@@ -63,6 +63,7 @@ func runLegacy(args []string) {
 		bgp          bool
 		maxHosts     int
 		yes          bool
+		probeFirst   bool
 	)
 
 	fs.StringVar(&addr, "addr", "", "Specify an IP, IP CIDR or domain to scan")
@@ -79,10 +80,15 @@ func runLegacy(args []string) {
 	fs.BoolVar(&bgp, "bgp", false, "Expand -addr <ip> to its BGP-announced prefix and scan the whole prefix")
 	fs.IntVar(&maxHosts, "max-hosts", 4096, "Cap on hosts when expanding a BGP prefix; exceeding it requires -yes")
 	fs.BoolVar(&yes, "yes", false, "Confirm scanning when a BGP expansion exceeds -max-hosts")
+	fs.BoolVar(&probeFirst, "probe-first", false, "Two-phase scan: cheap TCP liveness pre-filter before the full TLS scan (auto-on with -bgp)")
 	_ = fs.Parse(args)
 
 	setupLogging(verbose)
 	clearProxy()
+
+	if bgp {
+		probeFirst = true // a fresh BGP prefix is mostly dead space — pre-filter pays off
+	}
 
 	if !scanner.ExistOnlyOne([]string{addr, in, url}) {
 		slog.Error("Specify exactly one of: -addr, -in, -url")
@@ -96,6 +102,14 @@ func runLegacy(args []string) {
 	hostChan := resolveHosts(ctx, addr, in, url, enableIPv6, infinite, bgp, maxHosts, yes)
 	if hostChan == nil {
 		return
+	}
+	if probeFirst {
+		liveHosts := liveFilterBarrier(ctx, hostChan, port, enableIPv6)
+		if len(liveHosts) == 0 {
+			slog.Info("No live hosts after liveness pre-filter")
+			return
+		}
+		hostChan = hostsToChannel(liveHosts)
 	}
 
 	dm := data.NewDataManager(".")
@@ -240,6 +254,7 @@ func runScan(args []string) {
 		bgp          bool
 		maxHosts     int
 		yes          bool
+		probeFirst   bool
 	)
 
 	fs.StringVar(&addr, "addr", "", "IP, CIDR or domain to scan")
@@ -257,10 +272,15 @@ func runScan(args []string) {
 	fs.BoolVar(&bgp, "bgp", false, "Expand -addr <ip> to its BGP-announced prefix and scan the whole prefix")
 	fs.IntVar(&maxHosts, "max-hosts", 4096, "Cap on hosts when expanding a BGP prefix; exceeding it requires -yes")
 	fs.BoolVar(&yes, "yes", false, "Confirm scanning when a BGP expansion exceeds -max-hosts")
+	fs.BoolVar(&probeFirst, "probe-first", false, "Two-phase scan: cheap TCP liveness pre-filter before the full TLS scan (auto-on with -bgp)")
 	_ = fs.Parse(args)
 
 	setupLogging(verbose)
 	clearProxy()
+
+	if bgp {
+		probeFirst = true // a fresh BGP prefix is mostly dead space — pre-filter pays off
+	}
 
 	// Determine input source: -csv, -addr/-in/-url, or positional domain args
 	directDomains := fs.Args()
@@ -341,6 +361,19 @@ func runScan(args []string) {
 		rawHosts := resolveHosts(ctx, addr, in, url, enableIPv6, infinite, bgp, maxHosts, yes)
 		if rawHosts == nil {
 			return
+		}
+		if probeFirst {
+			// Stage 1: cheap TCP liveness pre-filter under its own signal
+			// context so a Ctrl+C here stops probing and proceeds to scan the
+			// hosts found so far, without cancelling the later scan phase.
+			probeCtx, probeCancel := signal.NotifyContext(ctx, os.Interrupt)
+			liveHosts := liveFilterBarrier(probeCtx, rawHosts, port, enableIPv6)
+			probeCancel()
+			if len(liveHosts) == 0 {
+				fmt.Fprintf(os.Stderr, "[%s] 探活后无存活主机\n", time.Now().Format("15:04:05"))
+				return
+			}
+			rawHosts = hostsToChannel(liveHosts)
 		}
 		fmt.Fprintf(os.Stderr, "[%s] 开始扫描IP段... (Ctrl+C 中断扫描并开始检测)\n", time.Now().Format("15:04:05"))
 
@@ -566,6 +599,55 @@ func resolveHosts(ctx context.Context, addr, in, url string, enableIPv6, infinit
 		return scanner.IterateCtx(ctx, strings.NewReader(strings.Join(domains, "\n")), enableIPv6)
 	}
 	return nil
+}
+
+// liveFilterBarrier runs the stage-1 TCP liveness probe over in, rendering a
+// rolling "探活 N/M" progress window, and returns the live hosts. It is a
+// barrier: it fully drains the probe before returning, so the stage-1 LiveLog
+// is closed before stage 2 writes to stderr (two live regions writing at once
+// would corrupt each other's frames).
+func liveFilterBarrier(ctx context.Context, in <-chan types.Host, port int, enableIPv6 bool) []types.Host {
+	probeLog := output.NewLiveLog(os.Stderr, 7)
+	var counts scanner.CountLiveProgress
+
+	cfg := scanner.ProbeConfig{
+		Port:       port,
+		EnableIPv6: enableIPv6,
+		OnProbe: func(host types.Host, alive bool) {
+			probed, live := counts.Record(alive)
+			mark := "·"
+			if alive {
+				mark = "✓"
+			}
+			target := host.Origin
+			if host.IP != nil {
+				target = host.IP.String()
+			}
+			probeLog.Push(fmt.Sprintf("[探活 %d/%d] %s %s", live, probed, mark, target))
+		},
+	}
+
+	liveCh := scanner.FilterLive(ctx, in, cfg)
+	var hosts []types.Host
+	for h := range liveCh {
+		hosts = append(hosts, h)
+	}
+	probeLog.Close()
+
+	probed, live := counts.Totals()
+	fmt.Fprintf(os.Stderr, "[%s] 探活完成: %d/%d 存活\n", time.Now().Format("15:04:05"), live, probed)
+	return hosts
+}
+
+// hostsToChannel replays a fixed host slice as a closed channel so it can feed
+// the scan pipeline like any other host source.
+func hostsToChannel(hosts []types.Host) <-chan types.Host {
+	ch := make(chan types.Host, len(hosts))
+	for _, h := range hosts {
+		ch <- h
+	}
+	close(ch)
+	return ch
 }
 
 func openOutput(path string) (io.Writer, io.Closer, error) {
