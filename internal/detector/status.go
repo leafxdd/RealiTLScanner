@@ -13,6 +13,8 @@ import (
 type StatusDetector struct {
 	timeout time.Duration
 	client  *http.Client
+	// testInjected: see RedirectDetector.testInjected.
+	testInjected bool
 }
 
 func NewStatusDetector(timeout time.Duration) *StatusDetector {
@@ -67,9 +69,5 @@ func (d *StatusDetector) Detect(ctx context.Context, result *types.ScanResult) e
 }
 
 func (d *StatusDetector) injected() bool {
-	tr, ok := d.client.Transport.(*http.Transport)
-	if !ok {
-		return true
-	}
-	return tr.DialContext == nil
+	return d.testInjected
 }

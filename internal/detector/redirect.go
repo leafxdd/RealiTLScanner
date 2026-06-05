@@ -13,6 +13,10 @@ import (
 type RedirectDetector struct {
 	timeout time.Duration
 	client  *http.Client
+	// testInjected is set by tests that swap in a client pointing at a local
+	// httptest server, to bypass the isSafeForProbe loopback guard. Real runs
+	// leave it false so the SSRF gate always applies.
+	testInjected bool
 }
 
 func NewRedirectDetector(timeout time.Duration) *RedirectDetector {
@@ -77,14 +81,11 @@ func (d *RedirectDetector) Detect(ctx context.Context, result *types.ScanResult)
 	return nil
 }
 
-// injected tells whether d.client has been replaced by a test fixture (which
-// uses a custom Transport, e.g. httptest.Server). The default client wired in
-// NewRedirectDetector has a *http.Transport with a DialContext set; we treat
-// any Transport with no DialContext (typical for httptest) as injected.
+// injected tells whether a test has swapped in a client pointing at a local
+// httptest server (which must bypass the isSafeForProbe loopback guard). It is
+// an explicit flag rather than sniffing the Transport: Go 1.26's
+// httptest.Server.Client() sets a DialContext, which broke the old
+// DialContext==nil heuristic.
 func (d *RedirectDetector) injected() bool {
-	tr, ok := d.client.Transport.(*http.Transport)
-	if !ok {
-		return true
-	}
-	return tr.DialContext == nil
+	return d.testInjected
 }

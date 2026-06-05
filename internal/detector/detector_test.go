@@ -157,6 +157,7 @@ func TestStatusDetector_PreservesRedirectStatusCode(t *testing.T) {
 
 	d := NewStatusDetector(2 * time.Second)
 	d.client = server.Client()
+	d.testInjected = true
 
 	result := &types.ScanResult{
 		TLS:      &types.TLSInfo{CertDomain: u.Host},
@@ -190,6 +191,7 @@ func TestStatusDetector_WritesWhenRedirectIsNil(t *testing.T) {
 
 	d := NewStatusDetector(2 * time.Second)
 	d.client = server.Client()
+	d.testInjected = true
 
 	result := &types.ScanResult{
 		TLS: &types.TLSInfo{CertDomain: u.Host},
@@ -220,6 +222,7 @@ func TestRedirectDetector_HonorsInjectedClient(t *testing.T) {
 
 	d := NewRedirectDetector(2 * time.Second)
 	d.client = server.Client() // inject — bypasses isSafeForProbe
+	d.testInjected = true
 	d.client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		return http.ErrUseLastResponse
 	}
