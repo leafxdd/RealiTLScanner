@@ -168,3 +168,76 @@ func TestResolvePrefix_InvalidIP(t *testing.T) {
 		t.Error("expected error for invalid IP")
 	}
 }
+
+func TestPrefixAddrCount(t *testing.T) {
+	cases := []struct {
+		prefix string
+		want   int
+	}{
+		{"1.2.3.0/24", 256},
+		{"1.2.0.0/22", 1024},
+		{"1.2.0.0/23", 512},
+		{"1.0.0.0/16", 65536},
+		{"1.2.3.4/32", 1},
+	}
+	for _, tc := range cases {
+		if got := PrefixAddrCount(netip.MustParsePrefix(tc.prefix)); got != tc.want {
+			t.Errorf("PrefixAddrCount(%s) = %d, want %d", tc.prefix, got, tc.want)
+		}
+	}
+	if got := PrefixAddrCount(netip.Prefix{}); got != 0 {
+		t.Errorf("PrefixAddrCount(invalid) = %d, want 0", got)
+	}
+	// A large IPv6 prefix must clamp rather than overflow int.
+	if got := PrefixAddrCount(netip.MustParsePrefix("2001:db8::/48")); got <= 0 {
+		t.Errorf("PrefixAddrCount(v6 /48) = %d, want a large positive (clamped)", got)
+	}
+}
+
+func TestWithinHostCap(t *testing.T) {
+	// Default cap 4096: a /22 (1024) passes, a /16 (65536) is blocked unless -yes.
+	if !WithinHostCap(1024, 4096, false) {
+		t.Error("/22 (1024) should be within the default 4096 cap")
+	}
+	if WithinHostCap(65536, 4096, false) {
+		t.Error("/16 (65536) should exceed the default cap without -yes")
+	}
+	if !WithinHostCap(65536, 4096, true) {
+		t.Error("-yes should allow exceeding the cap")
+	}
+	if !WithinHostCap(4096, 4096, false) {
+		t.Error("count == max should be allowed (boundary inclusive)")
+	}
+}
+
+func TestResolveAddrPrefix_RejectsCIDR(t *testing.T) {
+	if _, _, err := ResolveAddrPrefix(context.Background(), "1.2.3.0/24", false); err == nil {
+		t.Error("expected error: -bgp should reject a CIDR input")
+	}
+}
+
+func TestResolveAddrPrefix_RejectsIPv6WithoutFlag(t *testing.T) {
+	if _, _, err := ResolveAddrPrefix(context.Background(), "2001:db8::1", false); err == nil {
+		t.Error("expected error: IPv6 input without -46 should be rejected")
+	}
+}
+
+func TestResolveAddrPrefix_IP(t *testing.T) {
+	addr, cleanup := startCymruStub(t,
+		"Bulk mode; whois.cymru.com\n4837 | 104.249.172.234 | 104.249.172.0/22 | US | arin | 2015-01-01 | EXAMPLE, US\n")
+	defer cleanup()
+	oldAddr := cymruWhoisAddr
+	cymruWhoisAddr = addr
+	defer func() { cymruWhoisAddr = oldAddr }()
+
+	prefix, count, err := ResolveAddrPrefix(context.Background(), "104.249.172.234", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prefix.String() != "104.249.172.0/22" {
+		t.Errorf("prefix = %s, want 104.249.172.0/22", prefix)
+	}
+	if count != 1024 {
+		t.Errorf("count = %d, want 1024 (/22)", count)
+	}
+}

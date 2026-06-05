@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/netip"
@@ -173,4 +174,61 @@ func parseRIPEstatNetworkInfo(body []byte) (ASInfo, error) {
 		asn, _ = strconv.Atoi(r.Data.ASNs[0])
 	}
 	return ASInfo{ASN: asn, Prefix: prefix, Source: "ripestat"}, nil
+}
+
+// PrefixAddrCount returns the total number of addresses a prefix spans — the
+// scan size if we expand it wholesale. An IPv4 /24 is 256, a /22 is 1024, a
+// /16 is 65536. Counts that would overflow int (large IPv6 prefixes we never
+// enumerate) are clamped to math.MaxInt so the cap check still trips.
+func PrefixAddrCount(p netip.Prefix) int {
+	if !p.IsValid() {
+		return 0
+	}
+	hostBits := p.Addr().BitLen() - p.Bits()
+	if hostBits < 0 {
+		return 0
+	}
+	if hostBits >= 63 {
+		return math.MaxInt
+	}
+	return 1 << uint(hostBits)
+}
+
+// WithinHostCap is the single source of truth for the expansion safety policy:
+// an expansion of count hosts is allowed when it fits under max, or when the
+// user explicitly opted in with -yes. Keeps a /16 (65536) from being scanned by
+// accident while letting a /22 (1024) through under the default 4096 cap.
+func WithinHostCap(count, max int, yes bool) bool {
+	return yes || count <= max
+}
+
+// ResolveAddrPrefix maps a single IP (or a domain, resolved via DNS) to its
+// BGP-announced covering prefix and reports how many addresses that prefix
+// spans. It rejects a CIDR input: -bgp expands a single host into its
+// neighbourhood, and a CIDR is already a range. The count lets the caller apply
+// WithinHostCap before committing to the scan.
+func ResolveAddrPrefix(ctx context.Context, addr string, enableIPv6 bool) (netip.Prefix, int, error) {
+	if _, _, err := net.ParseCIDR(addr); err == nil {
+		return netip.Prefix{}, 0, fmt.Errorf("-bgp expects a single IP or domain, got CIDR %q", addr)
+	}
+	ip, err := netip.ParseAddr(addr)
+	if err != nil {
+		// Not a literal IP — try resolving it as a domain.
+		netIP, lerr := LookupIP(addr, enableIPv6)
+		if lerr != nil {
+			return netip.Prefix{}, 0, fmt.Errorf("resolve %q: %w", addr, lerr)
+		}
+		ip, err = netip.ParseAddr(netIP.String())
+		if err != nil {
+			return netip.Prefix{}, 0, fmt.Errorf("parse resolved IP %q: %w", netIP, err)
+		}
+	}
+	if ip.Is6() && !enableIPv6 {
+		return netip.Prefix{}, 0, fmt.Errorf("%s is IPv6; pass -46 to expand its prefix", ip)
+	}
+	info, err := ResolvePrefix(ctx, ip)
+	if err != nil {
+		return netip.Prefix{}, 0, err
+	}
+	return info.Prefix, PrefixAddrCount(info.Prefix), nil
 }

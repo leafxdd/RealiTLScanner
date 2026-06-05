@@ -60,6 +60,9 @@ func runLegacy(args []string) {
 		url          string
 		skipDownload bool
 		infinite     bool
+		bgp          bool
+		maxHosts     int
+		yes          bool
 	)
 
 	fs.StringVar(&addr, "addr", "", "Specify an IP, IP CIDR or domain to scan")
@@ -73,6 +76,9 @@ func runLegacy(args []string) {
 	fs.StringVar(&url, "url", "", "Crawl domain list from URL")
 	fs.BoolVar(&skipDownload, "skip-download", false, "Continue even if data file download fails")
 	fs.BoolVar(&infinite, "infinite", false, "When -addr is a single IP/domain, continuously scan neighbour IPs (default: single host)")
+	fs.BoolVar(&bgp, "bgp", false, "Expand -addr <ip> to its BGP-announced prefix and scan the whole prefix")
+	fs.IntVar(&maxHosts, "max-hosts", 4096, "Cap on hosts when expanding a BGP prefix; exceeding it requires -yes")
+	fs.BoolVar(&yes, "yes", false, "Confirm scanning when a BGP expansion exceeds -max-hosts")
 	_ = fs.Parse(args)
 
 	setupLogging(verbose)
@@ -87,7 +93,7 @@ func runLegacy(args []string) {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
-	hostChan := resolveHosts(ctx, addr, in, url, enableIPv6, infinite)
+	hostChan := resolveHosts(ctx, addr, in, url, enableIPv6, infinite, bgp, maxHosts, yes)
 	if hostChan == nil {
 		return
 	}
@@ -231,6 +237,9 @@ func runScan(args []string) {
 		url          string
 		skipDownload bool
 		infinite     bool
+		bgp          bool
+		maxHosts     int
+		yes          bool
 	)
 
 	fs.StringVar(&addr, "addr", "", "IP, CIDR or domain to scan")
@@ -245,6 +254,9 @@ func runScan(args []string) {
 	fs.StringVar(&url, "url", "", "Crawl domain list from URL")
 	fs.BoolVar(&skipDownload, "skip-download", false, "Continue even if data file download fails")
 	fs.BoolVar(&infinite, "infinite", false, "When -addr is a single IP/domain, continuously scan neighbour IPs (default: single host)")
+	fs.BoolVar(&bgp, "bgp", false, "Expand -addr <ip> to its BGP-announced prefix and scan the whole prefix")
+	fs.IntVar(&maxHosts, "max-hosts", 4096, "Cap on hosts when expanding a BGP prefix; exceeding it requires -yes")
+	fs.BoolVar(&yes, "yes", false, "Confirm scanning when a BGP expansion exceeds -max-hosts")
 	_ = fs.Parse(args)
 
 	setupLogging(verbose)
@@ -326,7 +338,7 @@ func runScan(args []string) {
 			fs.PrintDefaults()
 			return
 		}
-		rawHosts := resolveHosts(ctx, addr, in, url, enableIPv6, infinite)
+		rawHosts := resolveHosts(ctx, addr, in, url, enableIPv6, infinite, bgp, maxHosts, yes)
 		if rawHosts == nil {
 			return
 		}
@@ -514,8 +526,25 @@ func buildDetectors(dm *data.DataManager, geoReader *geo.Geo, filter string) []d
 	return filtered
 }
 
-func resolveHosts(ctx context.Context, addr, in, url string, enableIPv6, infinite bool) <-chan types.Host {
+func resolveHosts(ctx context.Context, addr, in, url string, enableIPv6, infinite, bgp bool, maxHosts int, yes bool) <-chan types.Host {
+	if bgp && addr == "" {
+		slog.Warn("-bgp only applies to -addr; ignoring")
+	}
 	if addr != "" {
+		if bgp {
+			prefix, count, err := scanner.ResolveAddrPrefix(ctx, addr, enableIPv6)
+			if err != nil {
+				slog.Error("BGP prefix lookup failed", "addr", addr, "err", err)
+				return nil
+			}
+			if !scanner.WithinHostCap(count, maxHosts, yes) {
+				slog.Error("BGP expansion exceeds -max-hosts; re-run with -yes to scan it anyway",
+					"prefix", prefix.String(), "hosts", count, "max-hosts", maxHosts)
+				return nil
+			}
+			slog.Info("Expanding to BGP prefix", "ip", addr, "prefix", prefix.String(), "hosts", count)
+			return scanner.IterateCtx(ctx, strings.NewReader(prefix.String()), enableIPv6)
+		}
 		return scanner.IterateAddrInfiniteCtx(ctx, addr, enableIPv6, infinite)
 	}
 	if in != "" {
@@ -576,6 +605,7 @@ func reorderArgs(args []string) []string {
 	knownFlags := map[string]bool{
 		"-addr": true, "-in": true, "-csv": true, "-port": true,
 		"-thread": true, "-out": true, "-timeout": true, "-url": true,
+		"-max-hosts": true,
 	}
 
 	for i := 0; i < len(args); i++ {
