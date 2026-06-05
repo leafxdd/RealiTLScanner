@@ -165,3 +165,68 @@ func TestSelectPrefix_IPv6Rejected(t *testing.T) {
 		t.Error("expected SelectPrefix to reject IPv6 (neighbour discovery is IPv4-only)")
 	}
 }
+
+func TestParseTargetIPv4(t *testing.T) {
+	if _, err := parseTargetIPv4("1.2.3.0/24", false); err == nil {
+		t.Error("expected CIDR input to be rejected (-bgp expands a single host)")
+	}
+	if _, err := parseTargetIPv4("2001:db8::1", false); err == nil {
+		t.Error("expected IPv6 without -46 to be rejected")
+	}
+	ip, err := parseTargetIPv4("104.249.172.234", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ip.String() != "104.249.172.234" {
+		t.Errorf("ip = %s, want 104.249.172.234", ip)
+	}
+}
+
+func TestSelectAddrPrefix_RejectsCIDR(t *testing.T) {
+	if _, _, err := SelectAddrPrefix(context.Background(), "1.2.3.0/24", false); err == nil {
+		t.Error("expected -bgp smart selection to reject a CIDR input")
+	}
+}
+
+func TestSelectAddrPrefix_IP(t *testing.T) {
+	addr, cleanup := startCymruStub(t,
+		"Bulk mode; whois.cymru.com\n4837 | 104.249.172.234 | 104.249.172.0/22 | US | arin | 2015-01-01 | EXAMPLE, US\n")
+	defer cleanup()
+	oldCymru := cymruWhoisAddr
+	cymruWhoisAddr = addr
+	defer func() { cymruWhoisAddr = oldCymru }()
+	// routing-status down → falls back to the lone Cymru seed (/22).
+	stubRoutingStatus(t, http.StatusInternalServerError, "boom")
+
+	prefix, cands, err := SelectAddrPrefix(context.Background(), "104.249.172.234", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prefix.String() != "104.249.172.0/22" {
+		t.Errorf("prefix = %s, want 104.249.172.0/22", prefix)
+	}
+	if len(cands) == 0 {
+		t.Error("expected at least the seed candidate")
+	}
+}
+
+func TestPrefixTooBroad(t *testing.T) {
+	cases := []struct {
+		prefix string
+		want   bool
+	}{
+		{"10.0.0.0/18", true}, // broader than the /19 floor
+		{"10.0.0.0/16", true},
+		{"10.0.0.0/19", false}, // the floor itself is acceptable
+		{"10.0.0.0/20", false},
+		{"10.0.0.0/24", false},
+	}
+	for _, tc := range cases {
+		if got := PrefixTooBroad(netip.MustParsePrefix(tc.prefix)); got != tc.want {
+			t.Errorf("PrefixTooBroad(%s) = %v, want %v", tc.prefix, got, tc.want)
+		}
+	}
+	if PrefixTooBroad(netip.Prefix{}) {
+		t.Error("PrefixTooBroad(invalid) should be false")
+	}
+}

@@ -101,6 +101,14 @@ func peekPrefix(ctx context.Context, prefix netip.Prefix) (PeekResult, error) {
 	}, nil
 }
 
+// PeekPrefix counts how many addresses bgp.tools has seen in a specific prefix.
+// Unlike PeekPrefixUsage (which resolves an IP's announced prefix first), it
+// peeks exactly the prefix given — used by the -bgp broad-prefix guard to count
+// active neighbours in the prefix smart selection actually chose.
+func PeekPrefix(ctx context.Context, prefix netip.Prefix) (PeekResult, error) {
+	return peekPrefix(ctx, prefix)
+}
+
 // PeekPrefixUsageForAddr resolves addr (a literal IP, or a domain via DNS) to
 // an IPv4 address and peeks its announced prefix. Thin entry point for the CLI
 // hook so the command layer needn't import net/netip.

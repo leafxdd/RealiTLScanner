@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/netip"
 	"os"
 	"os/signal"
 	"strings"
@@ -78,9 +79,9 @@ func runLegacy(args []string) {
 	fs.StringVar(&url, "url", "", "Crawl domain list from URL")
 	fs.BoolVar(&skipDownload, "skip-download", false, "Continue even if data file download fails")
 	fs.BoolVar(&infinite, "infinite", false, "When -addr is a single IP/domain, continuously scan neighbour IPs (default: single host)")
-	fs.BoolVar(&bgp, "bgp", false, "Expand -addr <ip> to its BGP-announced prefix and scan the whole prefix")
-	fs.IntVar(&maxHosts, "max-hosts", 4096, "Cap on hosts when expanding a BGP prefix; exceeding it requires -yes")
-	fs.BoolVar(&yes, "yes", false, "Confirm scanning when a BGP expansion exceeds -max-hosts")
+	fs.BoolVar(&bgp, "bgp", false, "Expand -addr <ip> to its best covering BGP prefix (smart /20-/24 selection) and scan it")
+	fs.IntVar(&maxHosts, "max-hosts", 4096, "For an over-broad (< /19) BGP prefix, refuse if bgp.tools shows more than N active neighbours (override with -yes)")
+	fs.BoolVar(&yes, "yes", false, "Force scanning past the -bgp broad-prefix active-neighbour cap")
 	fs.BoolVar(&probeFirst, "probe-first", false, "Two-phase scan: cheap TCP liveness pre-filter before the full TLS scan (auto-on with -bgp)")
 	_ = fs.Parse(args)
 
@@ -273,9 +274,9 @@ func runScan(args []string) {
 	fs.StringVar(&url, "url", "", "Crawl domain list from URL")
 	fs.BoolVar(&skipDownload, "skip-download", false, "Continue even if data file download fails")
 	fs.BoolVar(&infinite, "infinite", false, "When -addr is a single IP/domain, continuously scan neighbour IPs (default: single host)")
-	fs.BoolVar(&bgp, "bgp", false, "Expand -addr <ip> to its BGP-announced prefix and scan the whole prefix")
-	fs.IntVar(&maxHosts, "max-hosts", 4096, "Cap on hosts when expanding a BGP prefix; exceeding it requires -yes")
-	fs.BoolVar(&yes, "yes", false, "Confirm scanning when a BGP expansion exceeds -max-hosts")
+	fs.BoolVar(&bgp, "bgp", false, "Expand -addr <ip> to its best covering BGP prefix (smart /20-/24 selection) and scan it")
+	fs.IntVar(&maxHosts, "max-hosts", 4096, "For an over-broad (< /19) BGP prefix, refuse if bgp.tools shows more than N active neighbours (override with -yes)")
+	fs.BoolVar(&yes, "yes", false, "Force scanning past the -bgp broad-prefix active-neighbour cap")
 	fs.BoolVar(&probeFirst, "probe-first", false, "Two-phase scan: cheap TCP liveness pre-filter before the full TLS scan (auto-on with -bgp)")
 	_ = fs.Parse(args)
 
@@ -570,17 +571,10 @@ func resolveHosts(ctx context.Context, addr, in, url string, enableIPv6, infinit
 	}
 	if addr != "" {
 		if bgp {
-			prefix, count, err := scanner.ResolveAddrPrefix(ctx, addr, enableIPv6)
-			if err != nil {
-				slog.Error("BGP prefix lookup failed", "addr", addr, "err", err)
+			prefix, ok := resolveBGPPrefix(ctx, addr, enableIPv6, maxHosts, yes)
+			if !ok {
 				return nil
 			}
-			if !scanner.WithinHostCap(count, maxHosts, yes) {
-				slog.Error("BGP expansion exceeds -max-hosts; re-run with -yes to scan it anyway",
-					"prefix", prefix.String(), "hosts", count, "max-hosts", maxHosts)
-				return nil
-			}
-			slog.Info("Expanding to BGP prefix", "ip", addr, "prefix", prefix.String(), "hosts", count)
 			return scanner.IterateCtx(ctx, strings.NewReader(prefix.String()), enableIPv6)
 		}
 		return scanner.IterateAddrInfiniteCtx(ctx, addr, enableIPv6, infinite)
@@ -604,6 +598,58 @@ func resolveHosts(ctx context.Context, addr, in, url string, enableIPv6, infinit
 		return scanner.IterateCtx(ctx, strings.NewReader(strings.Join(domains, "\n")), enableIPv6)
 	}
 	return nil
+}
+
+// resolveBGPPrefix runs smart prefix selection for -bgp: it picks the best
+// covering prefix for addr, logs the candidate set, and applies the broad-
+// prefix safety gate. When the chosen prefix is broader than /19 — only reached
+// if the IP announces nothing tighter — it peeks bgp.tools for the active-
+// neighbour count and refuses if it exceeds maxHosts, unless -yes forces it
+// through. Returns the prefix to scan and whether scanning may proceed.
+func resolveBGPPrefix(ctx context.Context, addr string, enableIPv6 bool, maxHosts int, yes bool) (netip.Prefix, bool) {
+	prefix, candidates, err := scanner.SelectAddrPrefix(ctx, addr, enableIPv6)
+	if err != nil {
+		slog.Error("BGP prefix selection failed", "addr", addr, "err", err)
+		return netip.Prefix{}, false
+	}
+	slog.Info("Selected BGP prefix",
+		"ip", addr, "prefix", prefix.String(), "hosts", scanner.PrefixAddrCount(prefix),
+		"candidates", formatCandidates(candidates))
+
+	if scanner.PrefixTooBroad(prefix) {
+		res, perr := scanner.PeekPrefix(ctx, prefix)
+		switch {
+		case perr != nil && yes:
+			slog.Warn("Broad BGP prefix (< /19): active-count check failed, forcing due to -yes",
+				"prefix", prefix.String(), "err", perr)
+		case perr != nil:
+			slog.Error("Broad BGP prefix (< /19) and its active-neighbour count could not be verified; re-run with -yes to scan anyway",
+				"prefix", prefix.String(), "err", perr)
+			return netip.Prefix{}, false
+		case !scanner.WithinHostCap(res.Active, maxHosts, yes):
+			slog.Error("Broad BGP prefix has too many active neighbours; re-run with -yes to scan anyway",
+				"prefix", prefix.String(), "active", res.Active, "max-hosts", maxHosts)
+			return netip.Prefix{}, false
+		default:
+			slog.Info("Broad BGP prefix within active-neighbour cap",
+				"prefix", prefix.String(), "active", res.Active, "max-hosts", maxHosts)
+		}
+	}
+	return prefix, true
+}
+
+// formatCandidates renders the smart-selection candidate set for logging,
+// tagging each prefix with the RIPEstat visibility that informed the ranking.
+func formatCandidates(cands []scanner.PrefixCandidate) string {
+	parts := make([]string, len(cands))
+	for i, c := range cands {
+		if c.PeersTotal > 0 {
+			parts[i] = fmt.Sprintf("%s(vis=%d%%)", c.Prefix, int(c.Visibility*100+0.5))
+		} else {
+			parts[i] = c.Prefix.String()
+		}
+	}
+	return strings.Join(parts, " ")
 }
 
 // liveFilterBarrier runs the stage-1 TCP liveness probe over in, rendering a

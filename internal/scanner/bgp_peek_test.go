@@ -114,6 +114,29 @@ func TestPeekPrefixUsage_IPv6Rejected(t *testing.T) {
 	}
 }
 
+func TestPeekPrefix_ExportedWrapper(t *testing.T) {
+	// PeekPrefix peeks the exact prefix given (the -bgp guard's entry point),
+	// rather than re-resolving an IP like PeekPrefixUsage.
+	body := synthHeatmap(t, 12)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+	oldBase, oldDir := pfximgBaseURL, pfximgCacheDir
+	pfximgBaseURL = srv.URL
+	pfximgCacheDir = t.TempDir()
+	defer func() { pfximgBaseURL, pfximgCacheDir = oldBase, oldDir }()
+
+	res, err := PeekPrefix(context.Background(), netip.MustParsePrefix("1.2.3.0/24"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Active != 12 || res.Total != 256 {
+		t.Errorf("PeekPrefix = %d/%d, want 12/256", res.Active, res.Total)
+	}
+}
+
 func TestIsActiveCell(t *testing.T) {
 	cases := []struct {
 		name string

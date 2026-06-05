@@ -209,35 +209,3 @@ func TestWithinHostCap(t *testing.T) {
 		t.Error("count == max should be allowed (boundary inclusive)")
 	}
 }
-
-func TestResolveAddrPrefix_RejectsCIDR(t *testing.T) {
-	if _, _, err := ResolveAddrPrefix(context.Background(), "1.2.3.0/24", false); err == nil {
-		t.Error("expected error: -bgp should reject a CIDR input")
-	}
-}
-
-func TestResolveAddrPrefix_RejectsIPv6WithoutFlag(t *testing.T) {
-	if _, _, err := ResolveAddrPrefix(context.Background(), "2001:db8::1", false); err == nil {
-		t.Error("expected error: IPv6 input without -46 should be rejected")
-	}
-}
-
-func TestResolveAddrPrefix_IP(t *testing.T) {
-	addr, cleanup := startCymruStub(t,
-		"Bulk mode; whois.cymru.com\n4837 | 104.249.172.234 | 104.249.172.0/22 | US | arin | 2015-01-01 | EXAMPLE, US\n")
-	defer cleanup()
-	oldAddr := cymruWhoisAddr
-	cymruWhoisAddr = addr
-	defer func() { cymruWhoisAddr = oldAddr }()
-
-	prefix, count, err := ResolveAddrPrefix(context.Background(), "104.249.172.234", false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if prefix.String() != "104.249.172.0/22" {
-		t.Errorf("prefix = %s, want 104.249.172.0/22", prefix)
-	}
-	if count != 1024 {
-		t.Errorf("count = %d, want 1024 (/22)", count)
-	}
-}

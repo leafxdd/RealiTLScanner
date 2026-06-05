@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -85,6 +86,51 @@ func SelectPrefix(ctx context.Context, ip netip.Addr) (netip.Prefix, []PrefixCan
 	}
 	rankCandidates(candidates)
 	return candidates[0].Prefix, candidates, nil
+}
+
+// SelectAddrPrefix is the -bgp entry point: it turns addr (a literal IP, or a
+// domain via DNS) into an IPv4 address and runs SelectPrefix on it. It rejects
+// a CIDR — -bgp expands a single host into its neighbourhood, and a CIDR is
+// already a range.
+func SelectAddrPrefix(ctx context.Context, addr string, enableIPv6 bool) (netip.Prefix, []PrefixCandidate, error) {
+	ip, err := parseTargetIPv4(addr, enableIPv6)
+	if err != nil {
+		return netip.Prefix{}, nil, err
+	}
+	return SelectPrefix(ctx, ip)
+}
+
+// parseTargetIPv4 resolves a -bgp target to an IP address: it rejects a CIDR,
+// parses a literal IP, or falls back to a DNS lookup for a domain, and refuses
+// IPv6 unless enableIPv6 (neighbour discovery is IPv4-only regardless, but the
+// flag keeps the error message consistent with the rest of the CLI).
+func parseTargetIPv4(addr string, enableIPv6 bool) (netip.Addr, error) {
+	if _, _, err := net.ParseCIDR(addr); err == nil {
+		return netip.Addr{}, fmt.Errorf("-bgp expects a single IP or domain, got CIDR %q", addr)
+	}
+	ip, err := netip.ParseAddr(addr)
+	if err != nil {
+		netIP, lerr := LookupIP(addr, enableIPv6)
+		if lerr != nil {
+			return netip.Addr{}, fmt.Errorf("resolve %q: %w", addr, lerr)
+		}
+		ip, err = netip.ParseAddr(netIP.String())
+		if err != nil {
+			return netip.Addr{}, fmt.Errorf("parse resolved IP %q: %w", netIP, err)
+		}
+	}
+	if ip.Is6() && !enableIPv6 {
+		return netip.Addr{}, fmt.Errorf("%s is IPv6; pass -46 to expand its prefix", ip)
+	}
+	return ip, nil
+}
+
+// PrefixTooBroad reports whether a prefix is broader than the neighbour-
+// discovery comfort floor (/19). Such a prefix is only ever selected when an IP
+// announces nothing tighter, and the CLI then gates it on the active-neighbour
+// count before scanning.
+func PrefixTooBroad(p netip.Prefix) bool {
+	return p.IsValid() && p.Bits() < broadFloorBits
 }
 
 // enumerateCandidates returns the announced prefixes covering ip: the Cymru

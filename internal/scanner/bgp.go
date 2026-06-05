@@ -194,41 +194,10 @@ func PrefixAddrCount(p netip.Prefix) int {
 	return 1 << uint(hostBits)
 }
 
-// WithinHostCap is the single source of truth for the expansion safety policy:
-// an expansion of count hosts is allowed when it fits under max, or when the
-// user explicitly opted in with -yes. Keeps a /16 (65536) from being scanned by
-// accident while letting a /22 (1024) through under the default 4096 cap.
+// WithinHostCap is the shared safety predicate: a count is allowed when it fits
+// under max, or when the user explicitly opted in with -yes. For -bgp it gates
+// the active-neighbour count of an over-broad (< /19) prefix against -max-hosts
+// (see SelectPrefix / the CLI's broad-prefix guard).
 func WithinHostCap(count, max int, yes bool) bool {
 	return yes || count <= max
-}
-
-// ResolveAddrPrefix maps a single IP (or a domain, resolved via DNS) to its
-// BGP-announced covering prefix and reports how many addresses that prefix
-// spans. It rejects a CIDR input: -bgp expands a single host into its
-// neighbourhood, and a CIDR is already a range. The count lets the caller apply
-// WithinHostCap before committing to the scan.
-func ResolveAddrPrefix(ctx context.Context, addr string, enableIPv6 bool) (netip.Prefix, int, error) {
-	if _, _, err := net.ParseCIDR(addr); err == nil {
-		return netip.Prefix{}, 0, fmt.Errorf("-bgp expects a single IP or domain, got CIDR %q", addr)
-	}
-	ip, err := netip.ParseAddr(addr)
-	if err != nil {
-		// Not a literal IP — try resolving it as a domain.
-		netIP, lerr := LookupIP(addr, enableIPv6)
-		if lerr != nil {
-			return netip.Prefix{}, 0, fmt.Errorf("resolve %q: %w", addr, lerr)
-		}
-		ip, err = netip.ParseAddr(netIP.String())
-		if err != nil {
-			return netip.Prefix{}, 0, fmt.Errorf("parse resolved IP %q: %w", netIP, err)
-		}
-	}
-	if ip.Is6() && !enableIPv6 {
-		return netip.Prefix{}, 0, fmt.Errorf("%s is IPv6; pass -46 to expand its prefix", ip)
-	}
-	info, err := ResolvePrefix(ctx, ip)
-	if err != nil {
-		return netip.Prefix{}, 0, err
-	}
-	return info.Prefix, PrefixAddrCount(info.Prefix), nil
 }
