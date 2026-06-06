@@ -12,7 +12,7 @@ A high-performance TLS certificate scanner with integrated Reality protocol doma
 - **Domain feasibility detection**: CDN, GFW, TLS validation (SAN + wildcard via `VerifyHostname`), hot website, redirect, HTTP status
 - **De-risk blocklist**: vetoes proxy-keyword cert domains, proxy panels (detected via the `Server` header — x-ui / sing-box / …), and dynamic-DNS / NAS suffixes; flags cheap TLDs as a soft (−1 star) signal — surfaced in the 备注 column
 - **SSRF-safe detector probes**: redirect/status detectors reject private, loopback, link-local, and metadata addresses
-- **Neighbour discovery (`-bgp`)**: expand a single `-addr` IP to its BGP-announced prefix (Team Cymru with RIPEstat fallback) and scan the whole prefix, bounded by `-max-hosts` (default 4096; raise the bar with `-yes`)
+- **Neighbour discovery (`-bgp`)**: smart-select the best covering prefix for a single `-addr` IP — a host often sits under several overlapping announced prefixes (e.g. /24, /21, /20), so it enumerates them (Team Cymru seed + RIPEstat `routing-status`) and picks the `/20`–`/24` sweet spot (centre `/21`), then counts how many neighbours bgp.tools has actually seen there and aborts if that exceeds `-max-hosts` (default 4096) unless `-yes`
 - **Two-phase scan (`-probe-first`)**: a fast concurrent TCP liveness pre-filter weeds out dead/firewalled hosts before the expensive TLS scan; auto-enabled with `-bgp`
 - **Star rating** (0-5): handshake time, CDN, popularity, certificate validity
 - **Formatted table output** with color coding (auto-disabled on non-TTY / `NO_COLOR`)
@@ -152,16 +152,16 @@ Color output is automatically disabled when stdout is not a TTY (redirected to a
 
 ### Neighbour Discovery (BGP prefix expansion)
 
-Instead of guessing a CIDR or walking neighbours one-by-one with `-infinite`, expand a single IP to the exact prefix its origin AS announces and scan that — the natural "steal a neighbour" scope. Works in both basic and `scan` modes.
+Instead of guessing a CIDR or walking neighbours one-by-one with `-infinite`, `-bgp` expands a single IP to the prefix its origin AS announces and scans that — the natural "steal a neighbour" scope. Works in both basic and `scan` modes.
 
 ```bash
-# Expand a single IP to its announced BGP prefix and scan all of it:
+# Smart-select the best covering prefix for a single IP and scan it:
 ./RealiTLScanner -addr 104.249.172.234 -bgp
 ./RealiTLScanner scan -addr 104.249.172.234 -bgp
 
-# A prefix larger than the cap (default 4096 hosts) is refused unless you confirm:
-./RealiTLScanner -addr 1.2.3.4 -bgp -max-hosts 1024          # refuse if it expands past 1024
-./RealiTLScanner -addr 1.2.3.4 -bgp -yes                     # allow an oversized expansion
+# Refuse if bgp.tools shows more active neighbours than the cap, unless forced:
+./RealiTLScanner -addr 1.2.3.4 -bgp -max-hosts 1024          # refuse if >1024 active neighbours
+./RealiTLScanner -addr 1.2.3.4 -bgp -yes                     # force past the cap
 
 # Two-phase scan: a cheap TCP liveness pre-filter before the full TLS scan
 # (skips dead/firewalled hosts so they don't each burn the full -timeout).
@@ -169,13 +169,15 @@ Instead of guessing a CIDR or walking neighbours one-by-one with `-infinite`, ex
 ./RealiTLScanner -addr 1.2.3.0/24 -probe-first
 ```
 
-The covering prefix is resolved from public route collectors via Team Cymru's whois service (with RIPEstat as a fallback), so it can be a `/22`, `/23` or `/24` depending on how the AS announces its space — no API key required.
+**Smart prefix selection.** A single IP is usually covered by several overlapping announced prefixes — on bgp.tools one host might sit under a `/24`, a `/21` and a `/20` at once. `-bgp` enumerates them (a Team Cymru seed plus RIPEstat `routing-status`, which already drops near-invisible routes) and ranks toward the `/20`–`/24` sweet spot centred on `/21`: enough neighbours to find a good target, but not a `/14`'s worth to grind through. No API key required.
+
+**Active-neighbour count.** After picking a prefix, `-bgp` fetches bgp.tools' heatmap for it and counts how many addresses bgp.tools has actually seen in use — a quick up-front estimate (it reflects bgp.tools' ping view, not a substitute for the real TCP/TLS probe that follows). If that count exceeds `-max-hosts`, the scan aborts unless you pass `-yes`. A `/20`–`/24` prefix can never exceed the 4096 default, so the gate only really matters when the IP is announced solely as something broader.
 
 | Flag | Effect | Default |
 |------|--------|---------|
-| `-bgp` | Expand `-addr <ip>` to its announced prefix and scan the whole prefix | off |
-| `-max-hosts N` | Cap on hosts when expanding a prefix; exceeding it aborts unless `-yes` | 4096 |
-| `-yes` | Confirm scanning when an expansion exceeds `-max-hosts` | off |
+| `-bgp` | Smart-select the best covering BGP prefix for `-addr <ip>` (`/20`–`/24`) and scan it | off |
+| `-max-hosts N` | Abort if bgp.tools shows more than N active neighbours in the chosen prefix; override with `-yes` | 4096 |
+| `-yes` | Force scanning past the `-max-hosts` active-neighbour cap | off |
 | `-probe-first` | Two-phase scan: TCP liveness pre-filter before the full TLS scan | off (auto-on with `-bgp`) |
 | `-infinite` | Walk neighbour IPs outward from a single IP/domain (basic mode) | off |
 
@@ -243,7 +245,7 @@ cmd/realitlscanner/     CLI entry point (subcommand routing, url-fetch with time
 internal/
   types/                Shared types (Host, ScanResult, TLSInfo, CertValidResult)
   scanner/              TLS scanning (ctx-aware) + CSV domain parser + StrictDomainName validator
-                        + BGP prefix resolution (Cymru/RIPEstat) + TCP liveness pre-filter
+                        + BGP smart prefix selection (Cymru/RIPEstat) + bgp.tools neighbour count + TCP liveness pre-filter
   detector/             Detector interface + CDN/GFW/HotSite/Location/Redirect/Status/TLSCheck/Blocklist + scorer
                         + safe-target gate (loopback/private/metadata rejection)
   pipeline/             Channel-based scan→detect→output orchestration with attempted/failed/dropped stats

@@ -12,7 +12,7 @@
 - **域名可用性检测**：CDN、GFW、TLS 验证（SAN 优先 + 通配符 `VerifyHostname`）、热门网站、重定向、HTTP 状态
 - **去伪黑名单**：一票否决代理关键词域名、代理面板（通过 `Server` 头识别 x-ui / sing-box 等）、动态DNS / NAS 后缀；廉价 TLD 作为软信号（扣 1 星）——结果体现在「备注」列
 - **SSRF 安全防护**：redirect/status 探测器拒绝 loopback / private / link-local / 云元数据地址
-- **偷邻居发现（`-bgp`）**：把单个 `-addr` IP 展开成其所属 AS 宣告的 BGP 前缀（Team Cymru 主 + RIPEstat 兜底）整段扫描，受 `-max-hosts` 上限保护（默认 4096，超限需 `-yes`）
+- **偷邻居发现（`-bgp`）**：为单个 `-addr` IP 智能选段——一台主机常同时落在多个重叠的已通告前缀下（如 /24、/21、/20），故枚举它们（Team Cymru 种子 + RIPEstat `routing-status`）并挑出 `/20`–`/24` 甜点段（中心 `/21`），再清点 bgp.tools 在该段实际见过多少活跃邻居，超过 `-max-hosts`（默认 4096）则中止，除非 `-yes`
 - **两段式扫描（`-probe-first`）**：先用高并发 TCP 探活筛掉死/防火墙主机，再对存活主机做完整 TLS 扫描；`-bgp` 时自动开启
 - **星级评分**（0-5 星）：综合握手时间、CDN、热门度、证书有效期
 - **格式化彩色表格输出**（非 TTY 或 `NO_COLOR` 自动关闭着色）
@@ -150,16 +150,16 @@ home.duckdns.org                   ✗            318ms          60天          
 
 ### 偷邻居发现（BGP 前缀展开）
 
-不用猜 CIDR、也不用 `-infinite` 一个个试邻居——直接把单个 IP 展开成其源 AS 宣告的精确前缀来扫，这正是「偷邻居」的天然范围。基础模式和 `scan` 模式都支持。
+不用猜 CIDR、也不用 `-infinite` 一个个试邻居——`-bgp` 直接把单个 IP 展开成其源 AS 宣告的前缀来扫，这正是「偷邻居」的天然范围。基础模式和 `scan` 模式都支持。
 
 ```bash
-# 把单个 IP 展开成其 BGP 公告前缀，整段扫描：
+# 为单个 IP 智能选出最佳覆盖前缀并整段扫描：
 ./RealiTLScanner -addr 104.249.172.234 -bgp
 ./RealiTLScanner scan -addr 104.249.172.234 -bgp
 
-# 展开后主机数超过上限（默认 4096）会拒绝，除非显式确认：
-./RealiTLScanner -addr 1.2.3.4 -bgp -max-hosts 1024          # 超过 1024 即拒绝
-./RealiTLScanner -addr 1.2.3.4 -bgp -yes                     # 放行超限展开
+# 若 bgp.tools 显示的活跃邻居数超过上限则拒绝，除非强制放行：
+./RealiTLScanner -addr 1.2.3.4 -bgp -max-hosts 1024          # 活跃邻居 >1024 即拒绝
+./RealiTLScanner -addr 1.2.3.4 -bgp -yes                     # 强制越过上限
 
 # 两段式扫描：先做便宜的 TCP 探活，再做完整 TLS 扫描
 # （跳过死/防火墙主机，免得它们各自耗满 -timeout）。
@@ -167,13 +167,15 @@ home.duckdns.org                   ✗            318ms          60天          
 ./RealiTLScanner -addr 1.2.3.0/24 -probe-first
 ```
 
-覆盖前缀来自公共路由采集器，经 Team Cymru 的 whois 服务解析（RIPEstat 兜底），因此可能是 `/22`、`/23` 或 `/24`，取决于该 AS 如何宣告其地址块——无需 API key。
+**智能选段。** 一个 IP 通常被多个重叠的已通告前缀覆盖——在 bgp.tools 上同一台主机可能同时落在 `/24`、`/21`、`/20` 下。`-bgp` 把它们枚举出来（Team Cymru 种子 + RIPEstat `routing-status`，后者已自动剔除近乎不可见的路由），并朝以 `/21` 为中心的 `/20`–`/24` 甜点段排序：邻居够多能找到好目标，又不至于扫到 `/14` 那么大。无需 API key。
+
+**活跃邻居清点。** 选定前缀后，`-bgp` 会拉取 bgp.tools 的热力图并清点该段中 bgp.tools 实际见过多少地址——一个快速的事前估算（它反映的是 bgp.tools 的 ping 视角，不能替代随后真正的 TCP/TLS 探测）。若这个数超过 `-max-hosts` 则中止，除非加 `-yes`。`/20`–`/24` 段永远不可能超过默认的 4096，所以这道闸门只有当该 IP 仅被通告为更大的段时才真正起作用。
 
 | 标志 | 作用 | 默认 |
 |------|------|------|
-| `-bgp` | 把 `-addr <ip>` 展开成其公告前缀，整段扫描 | 关 |
-| `-max-hosts N` | 展开前缀时的主机数上限，超限则中止，除非加 `-yes` | 4096 |
-| `-yes` | 展开超过 `-max-hosts` 时确认放行 | 关 |
+| `-bgp` | 为 `-addr <ip>` 智能选出最佳覆盖 BGP 前缀（`/20`–`/24`）并扫描 | 关 |
+| `-max-hosts N` | 若 bgp.tools 显示选中段的活跃邻居数超过 N 则中止；可用 `-yes` 覆盖 | 4096 |
+| `-yes` | 强制越过 `-max-hosts` 活跃邻居上限 | 关 |
 | `-probe-first` | 两段式扫描：完整 TLS 扫描前先做 TCP 探活预筛 | 关（`-bgp` 时自动开） |
 | `-infinite` | 从单个 IP/域名向外遍历相邻 IP（基础模式） | 关 |
 
@@ -241,7 +243,7 @@ cmd/realitlscanner/     CLI 入口（子命令路由 + url-fetch 超时/大小�
 internal/
   types/                共享类型（Host、ScanResult、TLSInfo、CertValidResult）
   scanner/              TLS 扫描（ctx-aware）+ CSV 域名解析 + StrictDomainName 校验
-                        + BGP 前缀解析（Cymru/RIPEstat）+ TCP 探活预筛
+                        + BGP 智能选段（Cymru/RIPEstat）+ bgp.tools 邻居清点 + TCP 探活预筛
   detector/             检测器接口 + CDN/GFW/HotSite/Location/Redirect/Status/TLSCheck/Blocklist + 评分
                         + 安全目标网关（拒绝 loopback / private / 元数据地址）
   pipeline/             基于 Channel 的 扫描→检测→输出 流水线，带 attempted/tls_failed/dropped 统计
