@@ -10,11 +10,12 @@ A high-performance TLS certificate scanner with integrated Reality protocol doma
 - Concurrent scanning with configurable thread count
 - GeoIP location lookup (configurable data dir)
 - **Domain feasibility detection**: CDN, GFW, TLS validation (SAN + wildcard via `VerifyHostname`), hot website, redirect, HTTP status
+- **Post-quantum probe (PQC)**: offers `X25519MLKEM768` first in the handshake (falls back to X25519 — crypto/tls sends a key share for both, so no HelloRetryRequest penalty), records the negotiated curve; a dest that negotiates it behaves like current Chrome — a stronger steal-a-neighbour signal, counted toward the star rating and flagged in the 备注 column
 - **De-risk blocklist**: vetoes proxy-keyword cert domains, proxy panels (detected via the `Server` header — x-ui / sing-box / …), and dynamic-DNS / NAS suffixes; flags cheap TLDs as a soft (−1 star) signal — surfaced in the 备注 column
 - **SSRF-safe detector probes**: redirect/status detectors reject private, loopback, link-local, and metadata addresses
 - **Neighbour discovery (`-bgp`)**: smart-select the best covering prefix for a single `-addr` IP — a host often sits under several overlapping announced prefixes (e.g. /24, /21, /20), so it enumerates them (Team Cymru seed + RIPEstat `routing-status`) and picks the `/20`–`/24` sweet spot (centre `/21`), then counts how many neighbours bgp.tools has actually seen there and aborts if that exceeds `-max-hosts` (default 4096) unless `-yes`
 - **Two-phase scan (`-probe-first`)**: a fast concurrent TCP liveness pre-filter weeds out dead/firewalled hosts before the expensive TLS scan; auto-enabled with `-bgp` and CIDR range scans
-- **Star rating** (0-5): handshake time, CDN, popularity, certificate validity
+- **Star rating** (0-6): handshake time, CDN, popularity, certificate validity, post-quantum support
 - **Formatted table output** with color coding (auto-disabled on non-TTY / `NO_COLOR`)
 - **Scan statistics**: per-pipeline `attempted / tls_failed / dropped` counters surfaced in summary
 - **Graceful Ctrl+C**: in scan mode, interrupt scanning phase to immediately proceed to detection with collected domains
@@ -23,7 +24,7 @@ A high-performance TLS certificate scanner with integrated Reality protocol doma
 
 ## Building
 
-Requirement: Go 1.21+
+Requirement: Go 1.26+
 
 ```bash
 make build
@@ -112,7 +113,7 @@ Note: Basic mode (without `scan`) only downloads `Country.mmdb`. The `scan` comm
 ------------------------------------------------------------------------------------------------------------------------------
 最终域名                           基础条件     握手时间       证书时间       CDN      热门     推荐     页面状态     备注
 ------------------------------------------------------------------------------------------------------------------------------
-cdn77.akamai-edge.net              ✓            142ms          312天          无       -        *****    200
+cdn77.akamai-edge.net              ✓            142ms          312天          无       -        ******   200          PQC
 shop.bingserve.com                 ✓            274ms          83天           无       -        ****     200
 blog.example.xyz                   ✓            210ms          120天          无       -        ***      200          廉价
 vless.cheapvps.top                 ✗            156ms          88天           无       -                 200          代理
@@ -134,9 +135,9 @@ Color output is automatically disabled when stdout is not a TTY (redirected to a
 | 证书时间 | Days until certificate expiry (green ≥60, yellow ≥30, red <30) |
 | CDN | CDN detection level (无/low/medium/high) |
 | 热门 | Popular website flag (✓ = hot, - = not) |
-| 推荐 | Star rating 0-5 based on overall quality |
+| 推荐 | Star rating 0-6 based on overall quality |
 | 页面状态 | HTTP status code |
-| 备注 | De-risk flag: 代理 (proxy keyword) / 面板 (proxy panel via `Server` header) / 动态DNS / NAS / 廉价 (cheap TLD, soft) — blank means clean |
+| 备注 | De-risk flag: 代理 (proxy keyword) / 面板 (proxy panel via `Server` header) / 动态DNS / NAS / 廉价 (cheap TLD, soft); positive `PQC` (negotiated post-quantum key exchange) — blank means clean |
 
 #### Star Rating Criteria
 
@@ -147,6 +148,7 @@ Color output is automatically disabled when stdout is not a TTY (redirected to a
 | No CDN detected | +1 |
 | Not a popular/hot website | +1 |
 | Certificate valid ≥ 60 days | +1 |
+| Post-quantum key exchange (X25519MLKEM768) | +1 |
 
 > **De-risk overrides** (blocklist detector): a hard hit — proxy keyword in the cert domain, a proxy-panel `Server` header (x-ui / sing-box / …), or a dynamic-DNS / NAS suffix — vetoes the candidate (`✗`, score forced to 0). A cheap TLD (`.xyz` / `.top` / `.win` / …) is only a soft signal: it stays feasible but loses one star.
 
