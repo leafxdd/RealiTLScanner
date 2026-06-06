@@ -79,8 +79,8 @@ func runLegacy(args []string) {
 	fs.BoolVar(&skipDownload, "skip-download", false, "Continue even if data file download fails")
 	fs.BoolVar(&infinite, "infinite", false, "When -addr is a single IP/domain, continuously scan neighbour IPs (default: single host)")
 	fs.BoolVar(&bgp, "bgp", false, "Expand -addr <ip> to its best covering BGP prefix (smart /20-/24 selection) and scan it")
-	fs.IntVar(&maxHosts, "max-hosts", 4096, "For an over-broad (< /19) BGP prefix, refuse if bgp.tools shows more than N active neighbours (override with -yes)")
-	fs.BoolVar(&yes, "yes", false, "Force scanning past the -bgp broad-prefix active-neighbour cap")
+	fs.IntVar(&maxHosts, "max-hosts", 4096, "Abort if bgp.tools shows more than N active neighbours in the chosen -bgp prefix (override with -yes)")
+	fs.BoolVar(&yes, "yes", false, "Force scanning past the -bgp active-neighbour cap (-max-hosts)")
 	fs.BoolVar(&probeFirst, "probe-first", false, "Two-phase scan: cheap TCP liveness pre-filter before the full TLS scan (auto-on with -bgp)")
 	_ = fs.Parse(args)
 
@@ -271,8 +271,8 @@ func runScan(args []string) {
 	fs.BoolVar(&skipDownload, "skip-download", false, "Continue even if data file download fails")
 	fs.BoolVar(&infinite, "infinite", false, "When -addr is a single IP/domain, continuously scan neighbour IPs (default: single host)")
 	fs.BoolVar(&bgp, "bgp", false, "Expand -addr <ip> to its best covering BGP prefix (smart /20-/24 selection) and scan it")
-	fs.IntVar(&maxHosts, "max-hosts", 4096, "For an over-broad (< /19) BGP prefix, refuse if bgp.tools shows more than N active neighbours (override with -yes)")
-	fs.BoolVar(&yes, "yes", false, "Force scanning past the -bgp broad-prefix active-neighbour cap")
+	fs.IntVar(&maxHosts, "max-hosts", 4096, "Abort if bgp.tools shows more than N active neighbours in the chosen -bgp prefix (override with -yes)")
+	fs.BoolVar(&yes, "yes", false, "Force scanning past the -bgp active-neighbour cap (-max-hosts)")
 	fs.BoolVar(&probeFirst, "probe-first", false, "Two-phase scan: cheap TCP liveness pre-filter before the full TLS scan (auto-on with -bgp)")
 	_ = fs.Parse(args)
 
