@@ -80,7 +80,10 @@ const (
 	colHotW    = 8
 	colRecW    = 8
 	colStatusW = 12
-	colNoteW   = 8
+	// 备注 stacks every applicable flag (e.g. 代理/廉价/PQC); sized to the widest
+	// possible note 动态DNS/廉价/PQC (7+1+4+1+3 = 16 cells) so the fixed,
+	// stream-rendered frame never overflows. TestFormatNote_PQC guards the bound.
+	colNoteW = 16
 )
 
 var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
@@ -336,34 +339,39 @@ func formatStatus(code int) string {
 	return colorize(s, colorRed, true)
 }
 
-// formatNote renders the 备注 column: the single most salient remark for a
-// Reality dest candidate. Negatives win — hard blocklist hits (proxy panel /
-// dynamic DNS / NAS) in red, a cheap TLD as a soft yellow hint. When the dest
-// is otherwise clean, a post-quantum key exchange surfaces as a green "PQC".
+// formatNote renders the 备注 column: every applicable flag for a Reality dest
+// candidate, stacked and joined by "/". Order is negatives-then-perk — the hard
+// blocklist veto (代理/面板/动态DNS/NAS, red), then a cheap TLD (廉价, yellow),
+// then a post-quantum key exchange (PQC, green) — e.g. "面板/廉价/PQC", or just
+// "PQC". Each segment keeps its own colour. The widest possible stack
+// (动态DNS/廉价/PQC) is colNoteW cells, so the fixed frame always encloses it.
 // Returns (plain, colored) so file output stays ANSI-free.
 func formatNote(result *types.ScanResult) (plain, colored string) {
-	// Negative flags take priority — a disqualifier matters more than a perk.
+	var plains, coloreds []string
 	if result.Block != nil && result.Block.Hit {
+		var label string
 		switch result.Block.Reason {
 		case "proxy_keyword":
-			plain = "代理"
+			label = "代理"
 		case "proxy_server":
-			plain = "面板"
+			label = "面板"
 		case "dynamic_dns":
-			plain = "动态DNS"
+			label = "动态DNS"
 		case "nas":
-			plain = "NAS"
+			label = "NAS"
 		default:
-			plain = "屏蔽"
+			label = "屏蔽"
 		}
-		return plain, colorize(plain, colorRed, true)
+		plains = append(plains, label)
+		coloreds = append(coloreds, colorize(label, colorRed, true))
 	}
 	if result.Block != nil && result.Block.CheapTLD {
-		return "廉价", colorize("廉价", colorYellow, true)
+		plains = append(plains, "廉价")
+		coloreds = append(coloreds, colorize("廉价", colorYellow, true))
 	}
-	// Positive note: post-quantum key exchange — a modern, Chrome-like dest.
 	if result.TLS != nil && result.TLS.PQC {
-		return "PQC", colorize("PQC", colorGreen, true)
+		plains = append(plains, "PQC")
+		coloreds = append(coloreds, colorize("PQC", colorGreen, true))
 	}
-	return "", ""
+	return strings.Join(plains, "/"), strings.Join(coloreds, "/")
 }

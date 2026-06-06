@@ -42,8 +42,8 @@ func TestTableHeaderSeparatorEnclosesHeader(t *testing.T) {
 	}
 	// 9 column labels with CJK widths → header visual width is well-defined;
 	// pin it so future column changes force a re-check.
-	if got := tableSepLen; got != 126 {
-		t.Errorf("tableSepLen = %d, want 126 (regression: column layout changed without test update)", got)
+	if got := tableSepLen; got != 134 {
+		t.Errorf("tableSepLen = %d, want 134 (regression: column layout changed without test update)", got)
 	}
 }
 
@@ -101,29 +101,52 @@ func TestFormatNote_PQC(t *testing.T) {
 	// Clean dest that negotiated a PQC hybrid → green "PQC".
 	clean := &types.ScanResult{TLS: &types.TLSInfo{PQC: true}}
 	if plain, colored := formatNote(clean); plain != "PQC" || !strings.Contains(colored, "PQC") {
-		t.Errorf("clean PQC dest: plain=%q colored=%q, want plain \"PQC\"", plain, colored)
+		t.Errorf("clean PQC dest: plain=%q colored=%q, want \"PQC\"", plain, colored)
 	}
 
-	// A hard blocklist hit outranks the PQC perk.
-	blocked := &types.ScanResult{
-		TLS:   &types.TLSInfo{PQC: true},
-		Block: &types.BlockResult{Hit: true, Reason: "proxy_server"},
-	}
-	if plain, _ := formatNote(blocked); plain != "面板" {
-		t.Errorf("blocked PQC dest: note=%q, want \"面板\" (negative outranks PQC)", plain)
-	}
-
-	// A cheap TLD also outranks PQC.
-	cheap := &types.ScanResult{
+	// Cheap TLD + PQC stack as "廉价/PQC", each segment keeping its colour.
+	cheapPQC := &types.ScanResult{
 		TLS:   &types.TLSInfo{PQC: true},
 		Block: &types.BlockResult{CheapTLD: true},
 	}
-	if plain, _ := formatNote(cheap); plain != "廉价" {
-		t.Errorf("cheap-TLD PQC dest: note=%q, want \"廉价\"", plain)
+	if plain, colored := formatNote(cheapPQC); plain != "廉价/PQC" {
+		t.Errorf("cheap+PQC dest: plain=%q, want \"廉价/PQC\"", plain)
+	} else if !strings.Contains(colored, "廉价") || !strings.Contains(colored, "PQC") {
+		t.Errorf("cheap+PQC colored=%q should carry both segments", colored)
 	}
 
-	// Non-PQC, unflagged dest → no note.
+	// Cheap TLD without PQC → just 廉价.
+	cheap := &types.ScanResult{TLS: &types.TLSInfo{}, Block: &types.BlockResult{CheapTLD: true}}
+	if plain, _ := formatNote(cheap); plain != "廉价" {
+		t.Errorf("cheap-only dest: note=%q, want \"廉价\"", plain)
+	}
+
+	// Everything stacks — a proxy panel that is also a cheap TLD and speaks PQC
+	// shows all three: "面板/廉价/PQC".
+	all := &types.ScanResult{
+		TLS:   &types.TLSInfo{PQC: true},
+		Block: &types.BlockResult{Hit: true, Reason: "proxy_server", CheapTLD: true},
+	}
+	if plain, _ := formatNote(all); plain != "面板/廉价/PQC" {
+		t.Errorf("panel+cheap+PQC dest: note=%q, want \"面板/廉价/PQC\"", plain)
+	}
+
+	// Unflagged non-PQC dest → no note.
 	if plain, _ := formatNote(&types.ScanResult{TLS: &types.TLSInfo{}}); plain != "" {
-		t.Errorf("non-PQC clean dest: note=%q, want empty", plain)
+		t.Errorf("clean non-PQC dest: note=%q, want empty", plain)
+	}
+
+	// The widest possible stack must fit colNoteW so the fixed, stream-rendered
+	// frame never overflows. This is the bound colNoteW is sized against.
+	worst := &types.ScanResult{
+		TLS:   &types.TLSInfo{PQC: true},
+		Block: &types.BlockResult{Hit: true, Reason: "dynamic_dns", CheapTLD: true},
+	}
+	plain, _ := formatNote(worst)
+	if plain != "动态DNS/廉价/PQC" {
+		t.Errorf("worst-case note=%q, want \"动态DNS/廉价/PQC\"", plain)
+	}
+	if w := stringVisualWidth(plain); w > colNoteW {
+		t.Errorf("worst-case note width %d exceeds colNoteW %d — frame would overflow", w, colNoteW)
 	}
 }
