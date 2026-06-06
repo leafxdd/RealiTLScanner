@@ -1,5 +1,8 @@
 /RealiTLScanner
 /RealiTLScanner.exe
+/RealiTLScanner-linux-*
+/RealiTLScanner-windows-*
+/RealiTLScanner-darwin-*
 results.txt
 .idea
 in.txt
@@ -11,3 +14,8 @@ gfwlist.conf
 .ace-tool/
 .claude/
 .workflow/
+
+# Node-based MCP / tooling dependencies (not part of the Go project)
+node_modules/
+/package.json
+/package-lock.json
