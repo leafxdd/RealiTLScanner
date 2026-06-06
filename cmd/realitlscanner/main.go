@@ -48,7 +48,6 @@ func routeSubcommand(cmd string, args []string) int {
 }
 
 func runLegacy(args []string) {
-	args, bgpPeek := extractHiddenFlag(args, "-bgp-peek")
 	fs := flag.NewFlagSet("realitlscanner", flag.ExitOnError)
 	var (
 		addr         string
@@ -100,8 +99,6 @@ func runLegacy(args []string) {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
-
-	maybeBGPPeek(ctx, addr, bgpPeek, enableIPv6)
 
 	hostChan := resolveHosts(ctx, addr, in, url, enableIPv6, infinite, bgp, maxHosts, yes)
 	if hostChan == nil {
@@ -238,7 +235,6 @@ func formatScanLine(r *types.ScanResult, total int64, startedAt time.Time) strin
 }
 
 func runScan(args []string) {
-	args, bgpPeek := extractHiddenFlag(args, "-bgp-peek")
 	// Pre-sort: move non-flag arguments (domains) to the end so flag.Parse works correctly
 	args = reorderArgs(args)
 
@@ -363,7 +359,6 @@ func runScan(args []string) {
 			fs.PrintDefaults()
 			return
 		}
-		maybeBGPPeek(ctx, addr, bgpPeek, enableIPv6)
 		rawHosts := resolveHosts(ctx, addr, in, url, enableIPv6, infinite, bgp, maxHosts, yes)
 		if rawHosts == nil {
 			return
@@ -616,24 +611,29 @@ func resolveBGPPrefix(ctx context.Context, addr string, enableIPv6 bool, maxHost
 		"ip", addr, "prefix", prefix.String(), "hosts", scanner.PrefixAddrCount(prefix),
 		"candidates", formatCandidates(candidates))
 
-	if scanner.PrefixTooBroad(prefix) {
-		res, perr := scanner.PeekPrefix(ctx, prefix)
-		switch {
-		case perr != nil && yes:
-			slog.Warn("Broad BGP prefix (< /19): active-count check failed, forcing due to -yes",
-				"prefix", prefix.String(), "err", perr)
-		case perr != nil:
-			slog.Error("Broad BGP prefix (< /19) and its active-neighbour count could not be verified; re-run with -yes to scan anyway",
+	// Always count how many neighbours bgp.tools has seen in the chosen prefix.
+	// This is a heatmap (ICMP-view) estimate, not ground truth — the probe-first
+	// TCP phase that follows is what actually decides which neighbours get
+	// scanned — but it gives an up-front size readout and the abort gate.
+	res, perr := scanner.PeekPrefix(ctx, prefix)
+	if perr != nil {
+		// Only prefixes broader than /16 fail to render; treat "can't count" as
+		// needing explicit confirmation rather than scanning blind.
+		if !yes {
+			slog.Error("Could not count active neighbours (prefix too broad to preview); re-run with -yes to scan anyway",
 				"prefix", prefix.String(), "err", perr)
 			return netip.Prefix{}, false
-		case !scanner.WithinHostCap(res.Active, maxHosts, yes):
-			slog.Error("Broad BGP prefix has too many active neighbours; re-run with -yes to scan anyway",
-				"prefix", prefix.String(), "active", res.Active, "max-hosts", maxHosts)
-			return netip.Prefix{}, false
-		default:
-			slog.Info("Broad BGP prefix within active-neighbour cap",
-				"prefix", prefix.String(), "active", res.Active, "max-hosts", maxHosts)
 		}
+		slog.Warn("Could not count active neighbours; forcing due to -yes", "prefix", prefix.String(), "err", perr)
+		return prefix, true
+	}
+
+	slog.Info("Active-neighbour preview (bgp.tools)",
+		"prefix", prefix.String(), "active", res.Active, "total", res.Total, "cached", res.Cached)
+	if !scanner.WithinHostCap(res.Active, maxHosts, yes) {
+		slog.Error("Too many active neighbours; re-run with -yes to scan anyway",
+			"prefix", prefix.String(), "active", res.Active, "max-hosts", maxHosts)
+		return netip.Prefix{}, false
 	}
 	return prefix, true
 }
@@ -699,40 +699,6 @@ func hostsToChannel(hosts []types.Host) <-chan types.Host {
 	}
 	close(ch)
 	return ch
-}
-
-// extractHiddenFlag removes a bare boolean flag token from args, returning the
-// remaining args and whether it was present. Used for source-only flags that
-// are deliberately kept out of the FlagSet (and thus out of -h usage).
-func extractHiddenFlag(args []string, name string) (remaining []string, present bool) {
-	for _, a := range args {
-		if a == name {
-			present = true
-			continue
-		}
-		remaining = append(remaining, a)
-	}
-	return remaining, present
-}
-
-// maybeBGPPeek is the hidden `-bgp-peek` easter egg: log a one-line preview of
-// how many neighbours bgp.tools has seen in the target's /24. Purely
-// informational — it never gates scanning. Undocumented on purpose.
-func maybeBGPPeek(ctx context.Context, addr string, enabled, enableIPv6 bool) {
-	if !enabled || addr == "" {
-		return
-	}
-	res, err := scanner.PeekPrefixUsageForAddr(ctx, addr, enableIPv6)
-	if err != nil {
-		slog.Warn("bgp-peek failed", "addr", addr, "err", err)
-		return
-	}
-	src := "network"
-	if res.Cached {
-		src = "cache"
-	}
-	fmt.Fprintf(os.Stderr, "[%s] 🥚 pfximg: %s 约 %d/%d 邻居在用 (%s, 预览, 不代表可握手)\n",
-		time.Now().Format("15:04:05"), res.CIDR, res.Active, res.Total, src)
 }
 
 func openOutput(path string) (io.Writer, io.Closer, error) {

@@ -209,24 +209,3 @@ func TestSelectAddrPrefix_IP(t *testing.T) {
 		t.Error("expected at least the seed candidate")
 	}
 }
-
-func TestPrefixTooBroad(t *testing.T) {
-	cases := []struct {
-		prefix string
-		want   bool
-	}{
-		{"10.0.0.0/18", true}, // broader than the /19 floor
-		{"10.0.0.0/16", true},
-		{"10.0.0.0/19", false}, // the floor itself is acceptable
-		{"10.0.0.0/20", false},
-		{"10.0.0.0/24", false},
-	}
-	for _, tc := range cases {
-		if got := PrefixTooBroad(netip.MustParsePrefix(tc.prefix)); got != tc.want {
-			t.Errorf("PrefixTooBroad(%s) = %v, want %v", tc.prefix, got, tc.want)
-		}
-	}
-	if PrefixTooBroad(netip.Prefix{}) {
-		t.Error("PrefixTooBroad(invalid) should be false")
-	}
-}

@@ -45,10 +45,6 @@ const (
 	selectWindowLo   = 20 // /20 — least-specific end of the comfortable window
 	selectWindowHi   = 24 // /24 — most-specific end
 	selectTargetBits = 21 // /21 — centre of the sweet spot
-	// broadFloorBits: prefixes broader than /19 (i.e. Bits() < 19) are "too
-	// broad" — only used when nothing better is announced, and then gated by an
-	// active-address count check in the CLI layer.
-	broadFloorBits = 19
 )
 
 // PrefixCandidate is one announced prefix covering the target IP, tagged with
@@ -123,14 +119,6 @@ func parseTargetIPv4(addr string, enableIPv6 bool) (netip.Addr, error) {
 		return netip.Addr{}, fmt.Errorf("%s is IPv6; pass -46 to expand its prefix", ip)
 	}
 	return ip, nil
-}
-
-// PrefixTooBroad reports whether a prefix is broader than the neighbour-
-// discovery comfort floor (/19). Such a prefix is only ever selected when an IP
-// announces nothing tighter, and the CLI then gates it on the active-neighbour
-// count before scanning.
-func PrefixTooBroad(p netip.Prefix) bool {
-	return p.IsValid() && p.Bits() < broadFloorBits
 }
 
 // enumerateCandidates returns the announced prefixes covering ip: the Cymru

@@ -46,7 +46,7 @@ func synthHeatmapSize(t *testing.T, side, activeCells int) []byte {
 	return buf.Bytes()
 }
 
-func TestPeekPrefixUsage_DownloadDecodeAndCache(t *testing.T) {
+func TestPeekPrefix_DownloadDecodeAndCache(t *testing.T) {
 	const activeCells = 37
 	body := synthHeatmap(t, activeCells)
 
@@ -108,15 +108,15 @@ func TestPeekPrefixUsage_DownloadDecodeAndCache(t *testing.T) {
 	}
 }
 
-func TestPeekPrefixUsage_IPv6Rejected(t *testing.T) {
-	if _, err := PeekPrefixUsage(context.Background(), netip.MustParseAddr("2001:db8::1")); err == nil {
-		t.Error("expected pfximg peek to reject IPv6 (it is a /24 heatmap)")
+func TestPeekPrefix_IPv6Rejected(t *testing.T) {
+	if _, err := PeekPrefix(context.Background(), netip.MustParsePrefix("2001:db8::/48")); err == nil {
+		t.Error("expected pfximg peek to reject an IPv6 prefix (the heatmap is IPv4)")
 	}
 }
 
 func TestPeekPrefix_ExportedWrapper(t *testing.T) {
-	// PeekPrefix peeks the exact prefix given (the -bgp guard's entry point),
-	// rather than re-resolving an IP like PeekPrefixUsage.
+	// PeekPrefix peeks the exact prefix given — the -bgp active-neighbour count
+	// entry point.
 	body := synthHeatmap(t, 12)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/png")
@@ -222,46 +222,5 @@ func TestPeekPrefix_RejectsHugePrefix(t *testing.T) {
 	// /8 is far past the peek cap — must refuse before any network call.
 	if _, err := peekPrefix(context.Background(), netip.MustParsePrefix("10.0.0.0/8")); err == nil {
 		t.Error("expected peekPrefix to refuse an oversized prefix")
-	}
-}
-
-func TestPeekPrefixUsage_UsesResolvedPrefix(t *testing.T) {
-	// End-to-end: ResolvePrefix (Cymru stub) yields the announced /22, and the
-	// peek must target that prefix — not a hardcoded /24 — with Total=1024.
-	addr, cleanup := startCymruStub(t,
-		"Bulk mode; whois.cymru.com\n12345 | 203.0.113.50 | 203.0.113.0/22 | US | arin | 2020-01-01 | EXAMPLE, US\n")
-	defer cleanup()
-	oldCymru := cymruWhoisAddr
-	cymruWhoisAddr = addr
-	defer func() { cymruWhoisAddr = oldCymru }()
-
-	body := synthHeatmapSize(t, 32, 500) // /22 → padded 32×32, 500 blue
-	var gotPath string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
-		w.Header().Set("Content-Type", "image/png")
-		_, _ = w.Write(body)
-	}))
-	defer srv.Close()
-	oldBase, oldDir := pfximgBaseURL, pfximgCacheDir
-	pfximgBaseURL = srv.URL
-	pfximgCacheDir = t.TempDir()
-	defer func() { pfximgBaseURL, pfximgCacheDir = oldBase, oldDir }()
-
-	res, err := PeekPrefixUsage(context.Background(), netip.MustParseAddr("203.0.113.50"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.CIDR != "203.0.113.0/22" {
-		t.Errorf("CIDR = %q, want the resolved 203.0.113.0/22", res.CIDR)
-	}
-	if res.Total != 1024 {
-		t.Errorf("Total = %d, want 1024 (/22)", res.Total)
-	}
-	if res.Active != 500 {
-		t.Errorf("Active = %d, want 500", res.Active)
-	}
-	if !strings.Contains(gotPath, "203.0.113.0/22") {
-		t.Errorf("pfximg path = %q, want it to target the /22", gotPath)
 	}
 }

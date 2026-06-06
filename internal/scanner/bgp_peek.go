@@ -15,19 +15,16 @@ import (
 	"time"
 )
 
-// --- Hidden easter egg: bgp.tools /pfximg heatmap peek ---------------------
+// --- bgp.tools /pfximg heatmap peek ----------------------------------------
 //
-// NOT documented in the README — only visible to people reading the source.
-// `-bgp-peek` is default-OFF and opt-in. It resolves a target IP's announced
-// prefix (via ResolvePrefix — /24, /23, /22, /19, … whatever the AS announces),
-// downloads bgp.tools' heatmap PNG for it, and counts how many addresses
-// bgp.tools has "seen", as a cheap "is this prefix worth scanning" preview. It
-// is a hint, NOT a substitute for a real TLS probe — pfximg reflects bgp.tools'
-// ICMP-ping view, so an all-black prefix can still host pingable-but-firewalled
-// servers.
+// After -bgp picks a prefix, it counts how many addresses bgp.tools has "seen"
+// in that prefix by downloading bgp.tools' heatmap PNG and counting the
+// non-black pixels. It's an up-front size readout and the abort gate — a hint,
+// NOT a substitute for a real probe: pfximg reflects bgp.tools' ICMP-ping view,
+// so an all-black prefix can still host pingable-but-firewalled servers and a
+// busy one says nothing about TLS. The probe-first TCP phase is the ground truth.
 //
-// Legitimacy guardrails (all deliberate, do not remove):
-//   - default OFF + explicit opt-in (the user turning it on accepts the behaviour)
+// Good-citizen guardrails (deliberate, do not remove):
 //   - HONEST User-Agent (reuses bgpUserAgent; never spoofs a browser)
 //   - local cache with a TTL so we don't hammer bgp.tools
 //   - pure-Go image/png decode (no ImageMagick / external binary dependency)
@@ -54,21 +51,6 @@ type PeekResult struct {
 // and risks bgp.tools switching to an aggregated /24-per-pixel rendering, where
 // the per-address count no longer holds.
 const peekMaxAddrs = 1 << 16 // /16
-
-// PeekPrefixUsage downloads the bgp.tools pfximg heatmap for the prefix that ip
-// is announced under (resolved via ResolvePrefix — could be /24, /23, /22, /19,
-// …) and counts how many of its addresses bgp.tools has seen in use. IPv4 only.
-// Best-effort preview hint, NOT a substitute for a real probe.
-func PeekPrefixUsage(ctx context.Context, ip netip.Addr) (PeekResult, error) {
-	if !ip.IsValid() || !ip.Is4() {
-		return PeekResult{}, fmt.Errorf("pfximg peek needs an IPv4 address, got %q", ip)
-	}
-	info, err := ResolvePrefix(ctx, ip)
-	if err != nil {
-		return PeekResult{}, fmt.Errorf("resolve prefix for peek: %w", err)
-	}
-	return peekPrefix(ctx, info.Prefix)
-}
 
 // peekPrefix fetches and counts a single prefix's heatmap. bgp.tools paints one
 // pixel per address — coloured (blue→red) if it has seen the address, black if
@@ -101,30 +83,11 @@ func peekPrefix(ctx context.Context, prefix netip.Prefix) (PeekResult, error) {
 	}, nil
 }
 
-// PeekPrefix counts how many addresses bgp.tools has seen in a specific prefix.
-// Unlike PeekPrefixUsage (which resolves an IP's announced prefix first), it
-// peeks exactly the prefix given — used by the -bgp broad-prefix guard to count
-// active neighbours in the prefix smart selection actually chose.
+// PeekPrefix counts how many addresses bgp.tools has seen in prefix (its
+// non-black heatmap pixels) — the -bgp active-neighbour estimate, IPv4 only. It
+// peeks exactly the prefix given (the one smart selection chose).
 func PeekPrefix(ctx context.Context, prefix netip.Prefix) (PeekResult, error) {
 	return peekPrefix(ctx, prefix)
-}
-
-// PeekPrefixUsageForAddr resolves addr (a literal IP, or a domain via DNS) to
-// an IPv4 address and peeks its announced prefix. Thin entry point for the CLI
-// hook so the command layer needn't import net/netip.
-func PeekPrefixUsageForAddr(ctx context.Context, addr string, enableIPv6 bool) (PeekResult, error) {
-	ip, err := netip.ParseAddr(addr)
-	if err != nil {
-		netIP, lerr := LookupIP(addr, enableIPv6)
-		if lerr != nil {
-			return PeekResult{}, lerr
-		}
-		ip, err = netip.ParseAddr(netIP.String())
-		if err != nil {
-			return PeekResult{}, err
-		}
-	}
-	return PeekPrefixUsage(ctx, ip)
 }
 
 // fetchPfximg returns the heatmap PNG bytes for cidr, serving a fresh-enough
