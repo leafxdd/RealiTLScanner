@@ -13,7 +13,7 @@
 - **去伪黑名单**：一票否决代理关键词域名、代理面板（通过 `Server` 头识别 x-ui / sing-box 等）、动态DNS / NAS 后缀；廉价 TLD 作为软信号（扣 1 星）——结果体现在「备注」列
 - **SSRF 安全防护**：redirect/status 探测器拒绝 loopback / private / link-local / 云元数据地址
 - **偷邻居发现（`-bgp`）**：为单个 `-addr` IP 智能选段——一台主机常同时落在多个重叠的已通告前缀下（如 /24、/21、/20），故枚举它们（Team Cymru 种子 + RIPEstat `routing-status`）并挑出 `/20`–`/24` 甜点段（中心 `/21`），再清点 bgp.tools 在该段实际见过多少活跃邻居，超过 `-max-hosts`（默认 4096）则中止，除非 `-yes`
-- **两段式扫描（`-probe-first`）**：先用高并发 TCP 探活筛掉死/防火墙主机，再对存活主机做完整 TLS 扫描；`-bgp` 时自动开启
+- **两段式扫描（`-probe-first`）**：先用高并发 TCP 探活筛掉死/防火墙主机，再对存活主机做完整 TLS 扫描；`-bgp` 和 CIDR 段扫描时自动开启
 - **星级评分**（0-5 星）：综合握手时间、CDN、热门度、证书有效期
 - **格式化彩色表格输出**（非 TTY 或 `NO_COLOR` 自动关闭着色）
 - **扫描统计**：summary 输出 `attempted / tls_failed / dropped` 计数
@@ -163,8 +163,8 @@ home.duckdns.org                   ✗            318ms          60天          
 
 # 两段式扫描：先做便宜的 TCP 探活，再做完整 TLS 扫描
 # （跳过死/防火墙主机，免得它们各自耗满 -timeout）。
-# -bgp 时自动开启；任意 IP/CIDR 扫描也可手动开启：
-./RealiTLScanner -addr 1.2.3.0/24 -probe-first
+# -bgp 和 CIDR 扫描时自动开启；对 -in 文件(含 IP 段)可手动加：
+./RealiTLScanner -in ranges.txt -probe-first
 ```
 
 **智能选段。** 一个 IP 通常被多个重叠的已通告前缀覆盖——在 bgp.tools 上同一台主机可能同时落在 `/24`、`/21`、`/20` 下。`-bgp` 把它们枚举出来（Team Cymru 种子 + RIPEstat `routing-status`，后者已自动剔除近乎不可见的路由），并朝以 `/21` 为中心的 `/20`–`/24` 甜点段排序：邻居够多能找到好目标，又不至于扫到 `/14` 那么大。无需 API key。
@@ -176,7 +176,7 @@ home.duckdns.org                   ✗            318ms          60天          
 | `-bgp` | 为 `-addr <ip>` 智能选出最佳覆盖 BGP 前缀（`/20`–`/24`）并扫描 | 关 |
 | `-max-hosts N` | 若 bgp.tools 显示选中段的活跃邻居数超过 N 则中止；可用 `-yes` 覆盖 | 4096 |
 | `-yes` | 强制越过 `-max-hosts` 活跃邻居上限 | 关 |
-| `-probe-first` | 两段式扫描：完整 TLS 扫描前先做 TCP 探活预筛 | 关（`-bgp` 时自动开） |
+| `-probe-first` | 两段式扫描：完整 TLS 扫描前先做 TCP 探活预筛 | 关（`-bgp` / CIDR `-addr` 时自动开） |
 | `-infinite` | 从单个 IP/域名向外遍历相邻 IP（基础模式） | 关 |
 
 ### 单域名检测（`check` 命令）

@@ -121,6 +121,13 @@ func emit(ctx context.Context, reader io.Reader, enableIPv6 bool, hostChan chan<
 	}
 }
 
+// IsCIDR reports whether addr is a CIDR range (e.g. "1.2.3.0/24") rather than a
+// single IP or a domain.
+func IsCIDR(addr string) bool {
+	_, _, err := net.ParseCIDR(addr)
+	return err == nil
+}
+
 func IterateAddr(addr string, enableIPv6 bool) <-chan types.Host {
 	return IterateAddrInfinite(addr, enableIPv6, false)
 }

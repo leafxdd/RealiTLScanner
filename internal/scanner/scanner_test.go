@@ -479,3 +479,18 @@ func TestIterateFileCtx_OpenError(t *testing.T) {
 		t.Error("expected open error for missing file")
 	}
 }
+
+func TestIsCIDR(t *testing.T) {
+	cidrs := []string{"1.2.3.0/24", "10.0.0.0/8", "2001:db8::/48"}
+	for _, c := range cidrs {
+		if !IsCIDR(c) {
+			t.Errorf("IsCIDR(%q) = false, want true", c)
+		}
+	}
+	notCIDR := []string{"1.2.3.4", "example.com", "", "1.2.3.0/33", "not/a/cidr"}
+	for _, s := range notCIDR {
+		if IsCIDR(s) {
+			t.Errorf("IsCIDR(%q) = true, want false", s)
+		}
+	}
+}

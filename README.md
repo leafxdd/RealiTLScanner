@@ -13,7 +13,7 @@ A high-performance TLS certificate scanner with integrated Reality protocol doma
 - **De-risk blocklist**: vetoes proxy-keyword cert domains, proxy panels (detected via the `Server` header — x-ui / sing-box / …), and dynamic-DNS / NAS suffixes; flags cheap TLDs as a soft (−1 star) signal — surfaced in the 备注 column
 - **SSRF-safe detector probes**: redirect/status detectors reject private, loopback, link-local, and metadata addresses
 - **Neighbour discovery (`-bgp`)**: smart-select the best covering prefix for a single `-addr` IP — a host often sits under several overlapping announced prefixes (e.g. /24, /21, /20), so it enumerates them (Team Cymru seed + RIPEstat `routing-status`) and picks the `/20`–`/24` sweet spot (centre `/21`), then counts how many neighbours bgp.tools has actually seen there and aborts if that exceeds `-max-hosts` (default 4096) unless `-yes`
-- **Two-phase scan (`-probe-first`)**: a fast concurrent TCP liveness pre-filter weeds out dead/firewalled hosts before the expensive TLS scan; auto-enabled with `-bgp`
+- **Two-phase scan (`-probe-first`)**: a fast concurrent TCP liveness pre-filter weeds out dead/firewalled hosts before the expensive TLS scan; auto-enabled with `-bgp` and CIDR range scans
 - **Star rating** (0-5): handshake time, CDN, popularity, certificate validity
 - **Formatted table output** with color coding (auto-disabled on non-TTY / `NO_COLOR`)
 - **Scan statistics**: per-pipeline `attempted / tls_failed / dropped` counters surfaced in summary
@@ -165,8 +165,8 @@ Instead of guessing a CIDR or walking neighbours one-by-one with `-infinite`, `-
 
 # Two-phase scan: a cheap TCP liveness pre-filter before the full TLS scan
 # (skips dead/firewalled hosts so they don't each burn the full -timeout).
-# Auto-enabled with -bgp; request it explicitly for any IP/CIDR sweep:
-./RealiTLScanner -addr 1.2.3.0/24 -probe-first
+# Auto-on with -bgp and CIDR scans; pass it explicitly for an -in file of ranges:
+./RealiTLScanner -in ranges.txt -probe-first
 ```
 
 **Smart prefix selection.** A single IP is usually covered by several overlapping announced prefixes — on bgp.tools one host might sit under a `/24`, a `/21` and a `/20` at once. `-bgp` enumerates them (a Team Cymru seed plus RIPEstat `routing-status`, which already drops near-invisible routes) and ranks toward the `/20`–`/24` sweet spot centred on `/21`: enough neighbours to find a good target, but not a `/14`'s worth to grind through. No API key required.
@@ -178,7 +178,7 @@ Instead of guessing a CIDR or walking neighbours one-by-one with `-infinite`, `-
 | `-bgp` | Smart-select the best covering BGP prefix for `-addr <ip>` (`/20`–`/24`) and scan it | off |
 | `-max-hosts N` | Abort if bgp.tools shows more than N active neighbours in the chosen prefix; override with `-yes` | 4096 |
 | `-yes` | Force scanning past the `-max-hosts` active-neighbour cap | off |
-| `-probe-first` | Two-phase scan: TCP liveness pre-filter before the full TLS scan | off (auto-on with `-bgp`) |
+| `-probe-first` | Two-phase scan: TCP liveness pre-filter before the full TLS scan | off (auto-on with `-bgp` / CIDR `-addr`) |
 | `-infinite` | Walk neighbour IPs outward from a single IP/domain (basic mode) | off |
 
 ### Single Domain Check

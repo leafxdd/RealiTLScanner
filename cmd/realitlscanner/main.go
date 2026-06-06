@@ -81,7 +81,7 @@ func runLegacy(args []string) {
 	fs.BoolVar(&bgp, "bgp", false, "Expand -addr <ip> to its best covering BGP prefix (smart /20-/24 selection) and scan it")
 	fs.IntVar(&maxHosts, "max-hosts", 4096, "Abort if bgp.tools shows more than N active neighbours in the chosen -bgp prefix (override with -yes)")
 	fs.BoolVar(&yes, "yes", false, "Force scanning past the -bgp active-neighbour cap (-max-hosts)")
-	fs.BoolVar(&probeFirst, "probe-first", false, "Two-phase scan: cheap TCP liveness pre-filter before the full TLS scan (auto-on with -bgp)")
+	fs.BoolVar(&probeFirst, "probe-first", false, "Two-phase scan: cheap TCP liveness pre-filter before the full TLS scan (auto-on with -bgp and CIDR -addr)")
 	_ = fs.Parse(args)
 
 	setupLogging(verbose)
@@ -89,6 +89,9 @@ func runLegacy(args []string) {
 
 	if bgp {
 		probeFirst = true // a fresh BGP prefix is mostly dead space — pre-filter pays off
+	}
+	if scanner.IsCIDR(addr) {
+		probeFirst = true // a CIDR range is mostly dead space too; the probe port == scan port, so it's a lossless speed-up
 	}
 
 	if !scanner.ExistOnlyOne([]string{addr, in, url}) {
@@ -273,7 +276,7 @@ func runScan(args []string) {
 	fs.BoolVar(&bgp, "bgp", false, "Expand -addr <ip> to its best covering BGP prefix (smart /20-/24 selection) and scan it")
 	fs.IntVar(&maxHosts, "max-hosts", 4096, "Abort if bgp.tools shows more than N active neighbours in the chosen -bgp prefix (override with -yes)")
 	fs.BoolVar(&yes, "yes", false, "Force scanning past the -bgp active-neighbour cap (-max-hosts)")
-	fs.BoolVar(&probeFirst, "probe-first", false, "Two-phase scan: cheap TCP liveness pre-filter before the full TLS scan (auto-on with -bgp)")
+	fs.BoolVar(&probeFirst, "probe-first", false, "Two-phase scan: cheap TCP liveness pre-filter before the full TLS scan (auto-on with -bgp and CIDR -addr)")
 	_ = fs.Parse(args)
 
 	setupLogging(verbose)
@@ -281,6 +284,9 @@ func runScan(args []string) {
 
 	if bgp {
 		probeFirst = true // a fresh BGP prefix is mostly dead space — pre-filter pays off
+	}
+	if scanner.IsCIDR(addr) {
+		probeFirst = true // a CIDR range is mostly dead space too; the probe port == scan port, so it's a lossless speed-up
 	}
 
 	// Determine input source: -csv, -addr/-in/-url, or positional domain args
