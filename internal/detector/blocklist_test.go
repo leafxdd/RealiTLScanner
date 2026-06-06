@@ -163,3 +163,29 @@ func TestComputeScore_BlocklistVeto(t *testing.T) {
 		t.Errorf("cheap TLD score = %d, want %d (baseline-1)", got, clean-1)
 	}
 }
+
+func TestComputeScore_PQCBonus(t *testing.T) {
+	sni := true
+	r := &types.ScanResult{
+		TLS: &types.TLSInfo{
+			Version:       0x0304,
+			ALPN:          "h2",
+			CertDomain:    "example.com",
+			CertIssuer:    "Let's Encrypt",
+			HandshakeTime: 100 * time.Millisecond,
+			CertExpiry:    time.Now().Add(120 * 24 * time.Hour),
+		},
+		CertValid: &types.CertValidResult{Valid: true, SNIMatch: &sni},
+	}
+
+	without := ComputeScore(r) // all 5 classical criteria pass
+	r.TLS.PQC = true
+	with := ComputeScore(r)
+
+	if with != without+1 {
+		t.Errorf("PQC bonus: with=%d, without=%d, want with=without+1", with, without)
+	}
+	if with != 6 {
+		t.Errorf("fully clean dest + PQC = %d stars, want 6", with)
+	}
+}

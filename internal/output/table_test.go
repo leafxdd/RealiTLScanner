@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/xtls/RealiTLScanner/internal/types"
 )
 
 func TestStringVisualWidth(t *testing.T) {
@@ -92,5 +94,36 @@ func TestWriteHeader_SeparatorMatchesHeaderWidth(t *testing.T) {
 	if stringVisualWidth(lines[1]) != stringVisualWidth(lines[0]) {
 		t.Errorf("header visual width %d != separator width %d\nheader=%q\nsep=%q",
 			stringVisualWidth(lines[1]), stringVisualWidth(lines[0]), lines[1], lines[0])
+	}
+}
+
+func TestFormatNote_PQC(t *testing.T) {
+	// Clean dest that negotiated a PQC hybrid → green "PQC".
+	clean := &types.ScanResult{TLS: &types.TLSInfo{PQC: true}}
+	if plain, colored := formatNote(clean); plain != "PQC" || !strings.Contains(colored, "PQC") {
+		t.Errorf("clean PQC dest: plain=%q colored=%q, want plain \"PQC\"", plain, colored)
+	}
+
+	// A hard blocklist hit outranks the PQC perk.
+	blocked := &types.ScanResult{
+		TLS:   &types.TLSInfo{PQC: true},
+		Block: &types.BlockResult{Hit: true, Reason: "proxy_server"},
+	}
+	if plain, _ := formatNote(blocked); plain != "面板" {
+		t.Errorf("blocked PQC dest: note=%q, want \"面板\" (negative outranks PQC)", plain)
+	}
+
+	// A cheap TLD also outranks PQC.
+	cheap := &types.ScanResult{
+		TLS:   &types.TLSInfo{PQC: true},
+		Block: &types.BlockResult{CheapTLD: true},
+	}
+	if plain, _ := formatNote(cheap); plain != "廉价" {
+		t.Errorf("cheap-TLD PQC dest: note=%q, want \"廉价\"", plain)
+	}
+
+	// Non-PQC, unflagged dest → no note.
+	if plain, _ := formatNote(&types.ScanResult{TLS: &types.TLSInfo{}}); plain != "" {
+		t.Errorf("non-PQC clean dest: note=%q, want empty", plain)
 	}
 }

@@ -53,6 +53,12 @@ func ComputeScore(result *types.ScanResult) int {
 		}
 	}
 
+	// Post-quantum key exchange (X25519MLKEM768) — matches current Chrome and
+	// signals a modern, well-maintained dest. The 6th quality star.
+	if result.TLS.PQC {
+		score++
+	}
+
 	// Cheap / throwaway TLD — soft penalty, floored at 0. Not a hard veto:
 	// plenty of legitimate sites use .xyz/.top, so we only dock a star.
 	if result.Block != nil && result.Block.CheapTLD && score > 0 {

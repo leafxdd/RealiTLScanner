@@ -129,6 +129,14 @@ func TestScanTLS_LocalServer(t *testing.T) {
 	if result.TLS.ALPN != "h2" {
 		t.Errorf("expected h2 ALPN, got %s", result.TLS.ALPN)
 	}
+	// go.mod is go 1.26, so X25519MLKEM768 is default-on for both the in-process
+	// test server and ScanTLS's client → the handshake negotiates the PQC hybrid.
+	if result.TLS.Curve != "X25519MLKEM768" {
+		t.Errorf("expected X25519MLKEM768 curve (PQC default-on under go 1.26), got %q", result.TLS.Curve)
+	}
+	if !result.TLS.PQC {
+		t.Error("expected PQC=true for an X25519MLKEM768 handshake")
+	}
 }
 
 func portFromAddr(t *testing.T, addr string) int {

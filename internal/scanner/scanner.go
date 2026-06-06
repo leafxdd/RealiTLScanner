@@ -66,7 +66,12 @@ func ScanTLS(ctx context.Context, host types.Host, cfg ScanConfig, geoReader *ge
 		// reflects only feasibility heuristics + SNI hostname match.
 		InsecureSkipVerify: true,
 		NextProtos:         []string{"h2", "http/1.1"},
-		CurvePreferences:   []tls.CurveID{tls.X25519},
+		// Offer the X25519MLKEM768 post-quantum hybrid first, classical X25519
+		// as fallback. crypto/tls sends a key share for BOTH (see hybridKeyExchange
+		// .keyShares), so a non-PQC server still completes in one round trip —
+		// no HelloRetryRequest, no handshake-time penalty. A server that picks
+		// the hybrid behaves like current Chrome: a quality signal for a dest.
+		CurvePreferences: []tls.CurveID{tls.X25519MLKEM768, tls.X25519},
 	}
 	if host.Type == types.HostTypeDomain {
 		tlsCfg.ServerName = host.Origin
@@ -100,6 +105,8 @@ func ScanTLS(ctx context.Context, host types.Host, cfg ScanConfig, geoReader *ge
 	result.TLS = &types.TLSInfo{
 		Version:       state.Version,
 		ALPN:          state.NegotiatedProtocol,
+		Curve:         state.CurveID.String(),
+		PQC:           isPQCCurve(state.CurveID),
 		CertDomain:    domain,
 		CertIssuer:    issuers,
 		HandshakeTime: hsTime,
@@ -122,6 +129,7 @@ func ScanTLS(ctx context.Context, host types.Host, cfg ScanConfig, geoReader *ge
 	log("Connected to target", "feasible", result.Feasible, "ip", host.IP.String(),
 		"origin", host.Origin,
 		"tls", tls.VersionName(state.Version), "alpn", state.NegotiatedProtocol,
+		"curve", result.TLS.Curve, "pqc", result.TLS.PQC,
 		"cert-domain", domain, "cert-issuer", issuers, "geo", result.GeoCode)
 
 	return result
@@ -139,4 +147,12 @@ func pickCertDomain(leaf *x509.Certificate) string {
 	}
 	d = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(d)), ".")
 	return d
+}
+
+// isPQCCurve reports whether id is a post-quantum hybrid key exchange. ScanTLS
+// only offers X25519MLKEM768, so that's the only hybrid a server can negotiate
+// here; a dest that picks it behaves like current Chrome — a quality signal for
+// a Reality steal target.
+func isPQCCurve(id tls.CurveID) bool {
+	return id == tls.X25519MLKEM768
 }

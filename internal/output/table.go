@@ -336,15 +336,14 @@ func formatStatus(code int) string {
 	return colorize(s, colorRed, true)
 }
 
-// formatNote renders the 备注 column: the most important disqualifier for a
-// Reality dest candidate. Hard blocklist hits (proxy panel / dynamic DNS / NAS)
-// are shown in red; a cheap TLD is a soft yellow hint. Returns (plain, colored)
-// so file output stays ANSI-free.
+// formatNote renders the 备注 column: the single most salient remark for a
+// Reality dest candidate. Negatives win — hard blocklist hits (proxy panel /
+// dynamic DNS / NAS) in red, a cheap TLD as a soft yellow hint. When the dest
+// is otherwise clean, a post-quantum key exchange surfaces as a green "PQC".
+// Returns (plain, colored) so file output stays ANSI-free.
 func formatNote(result *types.ScanResult) (plain, colored string) {
-	if result.Block == nil {
-		return "", ""
-	}
-	if result.Block.Hit {
+	// Negative flags take priority — a disqualifier matters more than a perk.
+	if result.Block != nil && result.Block.Hit {
 		switch result.Block.Reason {
 		case "proxy_keyword":
 			plain = "代理"
@@ -359,8 +358,12 @@ func formatNote(result *types.ScanResult) (plain, colored string) {
 		}
 		return plain, colorize(plain, colorRed, true)
 	}
-	if result.Block.CheapTLD {
+	if result.Block != nil && result.Block.CheapTLD {
 		return "廉价", colorize("廉价", colorYellow, true)
+	}
+	// Positive note: post-quantum key exchange — a modern, Chrome-like dest.
+	if result.TLS != nil && result.TLS.PQC {
+		return "PQC", colorize("PQC", colorGreen, true)
 	}
 	return "", ""
 }

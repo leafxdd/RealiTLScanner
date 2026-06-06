@@ -8,6 +8,8 @@ import (
 type TLSInfo struct {
 	Version       uint16        `json:"version"`
 	ALPN          string        `json:"alpn"`
+	Curve         string        `json:"curve,omitempty"` // negotiated key-exchange group, e.g. "X25519MLKEM768"
+	PQC           bool          `json:"pqc,omitempty"`   // negotiated a post-quantum hybrid (ML-KEM); matches modern Chrome
 	CertDomain    string        `json:"cert_domain"`
 	CertIssuer    string        `json:"cert_issuer"`
 	HandshakeTime time.Duration `json:"handshake_time"`
