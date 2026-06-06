@@ -115,7 +115,7 @@ Note: Basic mode (without `scan`) only downloads `Country.mmdb`. The `scan` comm
 ------------------------------------------------------------------------------------------------------------------------------
 cdn77.akamai-edge.net              ✓            142ms          312天          无       -        ******   200          PQC
 shop.bingserve.com                 ✓            274ms          83天           无       -        ****     200
-blog.example.xyz                   ✓            210ms          120天          无       -        ***      200          廉价
+blog.example.xyz                   ✓            210ms          120天          无       -        ****     200          廉价/PQC
 vless.cheapvps.top                 ✗            156ms          88天           无       -                 200          代理
 sub.host-panel.net                 ✗            203ms          41天           无       -                 200          面板
 home.duckdns.org                   ✗            318ms          60天           无       -                 -            动态DNS
@@ -137,7 +137,7 @@ Color output is automatically disabled when stdout is not a TTY (redirected to a
 | 热门 | Popular website flag (✓ = hot, - = not) |
 | 推荐 | Star rating 0-6 based on overall quality |
 | 页面状态 | HTTP status code |
-| 备注 | De-risk flag: 代理 (proxy keyword) / 面板 (proxy panel via `Server` header) / 动态DNS / NAS / 廉价 (cheap TLD, soft); positive `PQC` (negotiated post-quantum key exchange) — blank means clean |
+| 备注 | Flags that hit are stacked with `/` (e.g. `代理/廉价/PQC`). Hard veto: 代理 (proxy keyword), 面板 (proxy panel via `Server` header), 动态DNS, NAS; soft: 廉价 (cheap TLD); bonus: PQC (negotiated post-quantum key exchange). Blank means clean |
 
 #### Star Rating Criteria
 

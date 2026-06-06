@@ -113,7 +113,7 @@ GOOS=windows GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o RealiTLScanner-
 ------------------------------------------------------------------------------------------------------------------------------
 cdn77.akamai-edge.net              ✓            142ms          312天          无       -        ******   200          PQC
 shop.bingserve.com                 ✓            274ms          83天           无       -        ****     200
-blog.example.xyz                   ✓            210ms          120天          无       -        ***      200          廉价
+blog.example.xyz                   ✓            210ms          120天          无       -        ****     200          廉价/PQC
 vless.cheapvps.top                 ✗            156ms          88天           无       -                 200          代理
 sub.host-panel.net                 ✗            203ms          41天           无       -                 200          面板
 home.duckdns.org                   ✗            318ms          60天           无       -                 -            动态DNS
@@ -135,7 +135,7 @@ home.duckdns.org                   ✗            318ms          60天          
 | 热门 | 热门网站标记（✓ = 热门，- = 非热门） |
 | 推荐 | 星级评分 0-6，综合评估质量 |
 | 页面状态 | HTTP 状态码 |
-| 备注 | 去伪标记：代理（域名含代理关键词）/ 面板（`Server` 头识别 x-ui 等）/ 动态DNS / NAS / 廉价（廉价 TLD，软信号）；正面标记 `PQC`（协商了后量子密钥交换）；为空表示干净 |
+| 备注 | 命中的标记按 `/` 叠加显示（如 `代理/廉价/PQC`）。硬否决：代理（域名含代理关键词）、面板（`Server` 头识别 x-ui 等）、动态DNS、NAS；软信号：廉价（廉价 TLD）；加分：PQC（协商了后量子密钥交换）。为空表示干净 |
 
 #### 星级评分标准
 
