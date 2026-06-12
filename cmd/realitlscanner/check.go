@@ -31,13 +31,14 @@ func runCheck(args []string) int {
 	fs.StringVar(&dataDir, "data-dir", ".", "Data files directory")
 	fs.BoolVar(&verbose, "v", false, "Verbose output")
 	fs.BoolVar(&skipDownload, "skip-download", false, "Continue even if data file download fails")
+	fs.Usage = func() { printCheckUsage(fs) }
 	_ = fs.Parse(args)
 
 	setupLogging(verbose)
 	clearProxy()
 
 	if fs.NArg() < 1 {
-		fmt.Fprintln(os.Stderr, "Usage: realitlscanner check <domain> [flags]")
+		fs.Usage()
 		return 1
 	}
 	domain := fs.Arg(0)

@@ -82,6 +82,7 @@ func runLegacy(args []string) {
 	fs.IntVar(&maxHosts, "max-hosts", 4096, "Abort if bgp.tools shows more than N active neighbours in the chosen -bgp prefix (override with -yes)")
 	fs.BoolVar(&yes, "yes", false, "Force scanning past the -bgp active-neighbour cap (-max-hosts)")
 	fs.BoolVar(&probeFirst, "probe-first", false, "Two-phase scan: cheap TCP liveness pre-filter before the full TLS scan (auto-on with -bgp and CIDR -addr)")
+	fs.Usage = func() { printMainUsage(fs) }
 	_ = fs.Parse(args)
 
 	setupLogging(verbose)
@@ -96,7 +97,7 @@ func runLegacy(args []string) {
 
 	if !scanner.ExistOnlyOne([]string{addr, in, url}) {
 		slog.Error("Specify exactly one of: -addr, -in, -url")
-		fs.PrintDefaults()
+		fs.Usage()
 		return
 	}
 
@@ -277,6 +278,7 @@ func runScan(args []string) {
 	fs.IntVar(&maxHosts, "max-hosts", 4096, "Abort if bgp.tools shows more than N active neighbours in the chosen -bgp prefix (override with -yes)")
 	fs.BoolVar(&yes, "yes", false, "Force scanning past the -bgp active-neighbour cap (-max-hosts)")
 	fs.BoolVar(&probeFirst, "probe-first", false, "Two-phase scan: cheap TCP liveness pre-filter before the full TLS scan (auto-on with -bgp and CIDR -addr)")
+	fs.Usage = func() { printScanUsage(fs) }
 	_ = fs.Parse(args)
 
 	setupLogging(verbose)
@@ -295,7 +297,7 @@ func runScan(args []string) {
 
 	if csvFile == "" && !hasAddrInput && len(directDomains) == 0 {
 		slog.Error("Specify input: -csv <file>, -addr/-in/-url, or domain names")
-		fs.PrintDefaults()
+		fs.Usage()
 		return
 	}
 
@@ -362,7 +364,7 @@ func runScan(args []string) {
 		// -addr/-in/-url: scan IP range, then detect on results directly
 		if !scanner.ExistOnlyOne([]string{addr, in, url}) {
 			slog.Error("Specify exactly one of: -addr, -in, -url")
-			fs.PrintDefaults()
+			fs.Usage()
 			return
 		}
 		rawHosts := resolveHosts(ctx, addr, in, url, enableIPv6, infinite, bgp, maxHosts, yes)

@@ -129,7 +129,7 @@ Color output is automatically disabled when stdout is not a TTY (redirected to a
 
 | Column | Description |
 |--------|-------------|
-| 最终域名 | Domain from TLS certificate |
+| 最终域名 | Domain from TLS certificate (column auto-fits the longest domain — never truncated) |
 | 基础条件 | TLS 1.3 + H2 + valid cert + issuer (✓/✗) |
 | 握手时间 | TLS handshake latency (green ≤200ms, yellow ≤500ms, red >500ms) |
 | 证书时间 | Days until certificate expiry (green ≥60, yellow ≥30, red <30) |
