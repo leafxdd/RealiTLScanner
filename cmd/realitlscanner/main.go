@@ -462,7 +462,6 @@ func runScan(args []string) {
 
 		table.SetTotal(len(scanResults))
 		fmt.Fprintf(os.Stderr, "[%s] 开始检测...\n", time.Now().Format("15:04:05"))
-		table.WriteHeader()
 
 		resultCh := make(chan *types.ScanResult, len(scanResults))
 		for _, r := range scanResults {
@@ -512,7 +511,6 @@ func runScan(args []string) {
 	}
 
 	t := time.Now()
-	table.WriteHeader()
 	suitable := 0
 	unsuitable := 0
 	for result := range outCh {

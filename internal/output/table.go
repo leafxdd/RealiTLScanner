@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/xtls/RealiTLScanner/internal/types"
 )
@@ -37,6 +36,18 @@ type TableWriter struct {
 	count        int
 	total        int
 	colorEnabled bool
+	progress     bool       // termW is a TTY → draw a transient "检测中" line while buffering
+	rows         []tableRow // buffered until flush so the domain column can auto-fit
+	sepLen       int        // visual width of the rendered frame; set at flush, reused by the summary
+	flushed      bool
+}
+
+// tableRow holds one result's pre-built cells in both variants: coloured for the
+// terminal, plain for file output. Cells are stored unpadded — the domain column
+// width isn't known until every row is in, so padding happens at flush time.
+type tableRow struct {
+	term [9]string
+	file [9]string
 }
 
 func NewTableWriter(term io.Writer, file io.Writer) *TableWriter {
@@ -44,6 +55,7 @@ func NewTableWriter(term io.Writer, file io.Writer) *TableWriter {
 		termW:        term,
 		fileW:        file,
 		colorEnabled: colorEnabled && isTTY(term),
+		progress:     isTTY(term),
 	}
 }
 
@@ -65,14 +77,12 @@ func (tw *TableWriter) SetTotal(n int) {
 	tw.total = n
 }
 
-// Column visual widths (terminal cells, CJK = 2). These match the natural
-// rendering of the CJK header labels under the previous %-Ns layout, so the
-// visual look is preserved while data rows are padded by cell width instead
-// of byte count. Padding by bytes (the old approach) over-counted ANSI escape
-// sequences, so cells without colour (e.g. hot="-") overshot their column
-// width and pushed subsequent columns out of alignment.
+// Fixed column visual widths (terminal cells, CJK = 2). The 最终域名 column is
+// the exception — it auto-fits the widest domain in the result set (see flush),
+// so a long cert domain like streamingaudio-ssl.itunes.apple.com is never
+// truncated. Padding is by cell width, not byte count, so ANSI escapes in a
+// coloured cell don't inflate its measured width.
 const (
-	colDomainW = 34
 	colBasicW  = 12
 	colHsW     = 14
 	colCertW   = 14
@@ -86,6 +96,10 @@ const (
 	colNoteW = 16
 )
 
+// domainHeaderLabel is the 最终域名 column header and the floor for the auto-fit
+// domain width — the column never shrinks below its own label.
+const domainHeaderLabel = "最终域名"
+
 var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
 // stringVisualWidth returns the terminal cell width of s, counting CJK and
@@ -96,13 +110,13 @@ func stringVisualWidth(s string) int {
 	for _, r := range s {
 		switch {
 		case (r >= 0x1100 && r <= 0x115F), // Hangul Jamo
-			(r >= 0x2E80 && r <= 0x9FFF),  // CJK Radicals .. Unified Ideographs
-			(r >= 0xA000 && r <= 0xA4CF),  // Yi
-			(r >= 0xAC00 && r <= 0xD7A3),  // Hangul Syllables
-			(r >= 0xF900 && r <= 0xFAFF),  // CJK Compatibility Ideographs
-			(r >= 0xFE30 && r <= 0xFE4F),  // CJK Compatibility Forms
-			(r >= 0xFF00 && r <= 0xFF60),  // Fullwidth forms
-			(r >= 0xFFE0 && r <= 0xFFE6):  // Fullwidth signs
+			(r >= 0x2E80 && r <= 0x9FFF), // CJK Radicals .. Unified Ideographs
+			(r >= 0xA000 && r <= 0xA4CF), // Yi
+			(r >= 0xAC00 && r <= 0xD7A3), // Hangul Syllables
+			(r >= 0xF900 && r <= 0xFAFF), // CJK Compatibility Ideographs
+			(r >= 0xFE30 && r <= 0xFE4F), // CJK Compatibility Forms
+			(r >= 0xFF00 && r <= 0xFF60), // Fullwidth forms
+			(r >= 0xFFE0 && r <= 0xFFE6): // Fullwidth signs
 			w += 2
 		default:
 			w++
@@ -123,11 +137,12 @@ func padVisualRight(s string, width int) string {
 	return s + strings.Repeat(" ", width-have)
 }
 
-// renderRow joins nine pre-built cells with single-space delimiters,
-// padding each to its column's visual cell width. ANSI escapes inside
-// cells are preserved but ignored for width.
-func renderRow(domain, basic, hs, cert, cdn, hot, rec, status, note string) string {
-	return padVisualRight(domain, colDomainW) + " " +
+// renderRow joins nine pre-built cells with single-space delimiters, padding
+// each to its column's visual cell width. The domain column width is passed in
+// because it is computed dynamically (auto-fit). ANSI escapes inside cells are
+// preserved but ignored for width.
+func renderRow(domainW int, domain, basic, hs, cert, cdn, hot, rec, status, note string) string {
+	return padVisualRight(domain, domainW) + " " +
 		padVisualRight(basic, colBasicW) + " " +
 		padVisualRight(hs, colHsW) + " " +
 		padVisualRight(cert, colCertW) + " " +
@@ -138,16 +153,19 @@ func renderRow(domain, basic, hs, cert, cdn, hot, rec, status, note string) stri
 		padVisualRight(note, colNoteW)
 }
 
-// tableHeader is the single source of truth for column layout. The dash
-// separator below is sized by its actual terminal cell width — Chinese
-// labels take 2 cells per glyph, so a naive rune count under-sizes the
-// separator and lets the last two columns leak past it.
-var (
-	tableHeader = renderRow(
-		"最终域名", "基础条件", "握手时间", "证书时间",
+// headerRow renders the column header for a given domain-column width. The dash
+// separator (see flush) is sized by this row's terminal cell width — CJK labels
+// take 2 cells per glyph, so a naive rune count under-sizes it and lets the last
+// columns leak past it.
+func headerRow(domainW int) string {
+	return renderRow(domainW,
+		domainHeaderLabel, "基础条件", "握手时间", "证书时间",
 		"CDN", "热门", "推荐", "页面状态", "备注")
-	tableSepLen = stringVisualWidth(tableHeader)
-)
+}
+
+// sepLen is the visual width of the frame (header / separator) for a given
+// domain-column width.
+func sepLen(domainW int) int { return stringVisualWidth(headerRow(domainW)) }
 
 // writeTerm writes s to the terminal stream, stripping ANSI colour escapes
 // when the destination is not a TTY.
@@ -156,22 +174,6 @@ func (tw *TableWriter) writeTerm(s string) {
 		s = ansiRE.ReplaceAllString(s, "")
 	}
 	fmt.Fprint(tw.termW, s)
-}
-
-func (tw *TableWriter) WriteHeader() {
-	sep := strings.Repeat("-", tableSepLen)
-
-	tw.mu.Lock()
-	defer tw.mu.Unlock()
-	tw.writeTerm(sep + "\n")
-	tw.writeTerm(tableHeader + "\n")
-	tw.writeTerm(sep + "\n")
-
-	if tw.fileW != nil {
-		fmt.Fprintln(tw.fileW, sep)
-		fmt.Fprintln(tw.fileW, tableHeader)
-		fmt.Fprintln(tw.fileW, sep)
-	}
 }
 
 func (tw *TableWriter) WriteResult(result *types.ScanResult) {
@@ -185,7 +187,7 @@ func (tw *TableWriter) WriteResult(result *types.ScanResult) {
 	defer tw.mu.Unlock()
 	tw.count++
 
-	domain := truncateByRune(result.TLS.CertDomain, 28)
+	domain := result.TLS.CertDomain
 
 	baseOk := result.Feasible
 	baseStr := colorize("✓", colorGreen, baseOk)
@@ -237,13 +239,76 @@ func (tw *TableWriter) WriteResult(result *types.ScanResult) {
 
 	notePlain, noteStr := formatNote(result)
 
-	termLine := renderRow(domain, baseStr, hsStr, certStr, cdnStr, hotStr, starsStr, statusStr, noteStr)
-	tw.writeTerm(termLine + "\n")
+	tw.rows = append(tw.rows, tableRow{
+		term: [9]string{domain, baseStr, hsStr, certStr, cdnStr, hotStr, starsStr, statusStr, noteStr},
+		file: [9]string{domain, basePlain, hsPlain, certPlain, cdnPlain, hotPlain, stars, statusPlain, notePlain},
+	})
+	tw.drawProgress()
+}
+
+// flush computes the auto-fit domain-column width across every buffered row,
+// then emits the separator, header, and all rows in one pass. Buffering is what
+// lets the first column size itself to the longest domain without truncation —
+// at the cost of per-row streaming, a trade made deliberately. Caller must hold
+// tw.mu. Idempotent.
+func (tw *TableWriter) flush() {
+	if tw.flushed {
+		return
+	}
+	tw.flushed = true
+	tw.clearProgress()
+
+	domainW := stringVisualWidth(domainHeaderLabel)
+	for i := range tw.rows {
+		if w := stringVisualWidth(tw.rows[i].file[0]); w > domainW {
+			domainW = w
+		}
+	}
+	header := headerRow(domainW)
+	tw.sepLen = stringVisualWidth(header)
+	sep := strings.Repeat("-", tw.sepLen)
+
+	tw.writeTerm(sep + "\n")
+	tw.writeTerm(header + "\n")
+	tw.writeTerm(sep + "\n")
+	for i := range tw.rows {
+		c := tw.rows[i].term
+		tw.writeTerm(renderRow(domainW, c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], c[8]) + "\n")
+	}
 
 	if tw.fileW != nil {
-		fileLine := renderRow(domain, basePlain, hsPlain, certPlain, cdnPlain, hotPlain, stars, statusPlain, notePlain)
-		fmt.Fprintln(tw.fileW, fileLine)
+		fmt.Fprintln(tw.fileW, sep)
+		fmt.Fprintln(tw.fileW, header)
+		fmt.Fprintln(tw.fileW, sep)
+		for i := range tw.rows {
+			c := tw.rows[i].file
+			fmt.Fprintln(tw.fileW, renderRow(domainW, c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], c[8]))
+		}
 	}
+}
+
+// drawProgress paints a single transient "检测中 N/M" line on the terminal so a
+// long detection phase doesn't look frozen while rows are buffered. TTY only —
+// the cursor-control escapes would corrupt piped/redirected output. Caller must
+// hold tw.mu.
+func (tw *TableWriter) drawProgress() {
+	if !tw.progress {
+		return
+	}
+	msg := fmt.Sprintf("检测中 %d", tw.count)
+	if tw.total > 0 {
+		msg = fmt.Sprintf("检测中 %d/%d", tw.count, tw.total)
+	}
+	fmt.Fprintf(tw.termW, "\r\x1b[2K%s", msg)
+}
+
+// clearProgress erases the transient progress line so the table frame starts at
+// column 0 of a clean line. No-op on non-TTY.
+func (tw *TableWriter) clearProgress() {
+	if !tw.progress {
+		return
+	}
+	fmt.Fprint(tw.termW, "\r\x1b[2K")
 }
 
 // SummaryStats are optional counters surfaced in WriteSummary; pass zero
@@ -261,8 +326,9 @@ func (tw *TableWriter) WriteSummary(suitable, unsuitable int, elapsed time.Durat
 func (tw *TableWriter) WriteSummaryWithStats(suitable, unsuitable int, elapsed time.Duration, stats SummaryStats) {
 	tw.mu.Lock()
 	defer tw.mu.Unlock()
+	tw.flush() // emit the buffered table first; this also sets tw.sepLen
 
-	sep := strings.Repeat("-", tableSepLen)
+	sep := strings.Repeat("-", tw.sepLen)
 	total := suitable + unsuitable
 	pct := float64(0)
 	if total > 0 {
@@ -280,16 +346,6 @@ func (tw *TableWriter) WriteSummaryWithStats(suitable, unsuitable int, elapsed t
 	if tw.fileW != nil {
 		fmt.Fprint(tw.fileW, summary)
 	}
-}
-
-// truncateByRune cuts s to at most max runes, appending ".." when truncated.
-// Byte-slicing a multi-byte string mid-rune would produce mojibake.
-func truncateByRune(s string, max int) string {
-	if utf8.RuneCountInString(s) <= max {
-		return s
-	}
-	runes := []rune(s)
-	return string(runes[:max]) + ".."
 }
 
 func colorize(s, color string, apply bool) string {

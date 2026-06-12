@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-	"unicode/utf8"
 
 	"github.com/xtls/RealiTLScanner/internal/types"
 )
@@ -170,6 +169,7 @@ func TestTableWriter_RendersPreComputedScore(t *testing.T) {
 	r := testResult()
 	r.Score = 3
 	tw.WriteResult(r)
+	tw.WriteSummaryWithStats(1, 0, time.Second, SummaryStats{}) // flushes the buffered table
 
 	out := stripANSI(buf.String())
 	if !strings.Contains(out, "***") {
@@ -259,8 +259,8 @@ func TestTableWriter_RedirectStripsANSI(t *testing.T) {
 	tw := NewTableWriter(&buf, nil)
 	r := testResult()
 	r.Score = 3
-	tw.WriteHeader()
 	tw.WriteResult(r)
+	tw.WriteSummaryWithStats(1, 0, time.Second, SummaryStats{}) // flushes the buffered table
 
 	out := buf.String()
 	if strings.Contains(out, "\x1b[") {
@@ -357,22 +357,6 @@ func TestJSONWriter_BlockAndServer(t *testing.T) {
 	}
 	if got.Redirect == nil || got.Redirect.Server != "x-ui" {
 		t.Errorf("Redirect.Server missing/wrong in JSON: %+v", got.Redirect)
-	}
-}
-
-func TestTableWriter_TruncatesByRune(t *testing.T) {
-	// 多字节中文字符若按 byte 截断会破坏 UTF-8。
-	long := strings.Repeat("中", 40) // 40 runes / 120 bytes
-	got := truncateByRune(long, 28)
-	if utf8.RuneCountInString(got) != 30 { // 28 + 2 dots
-		t.Errorf("rune count: got %d, want 30", utf8.RuneCountInString(got))
-	}
-	if !strings.HasSuffix(got, "..") {
-		t.Errorf("expected '..' suffix, got %q", got)
-	}
-	// Output must remain valid UTF-8 (no mid-rune cut).
-	if !utf8.ValidString(got) {
-		t.Errorf("truncated string is not valid UTF-8: %q", got)
 	}
 }
 
