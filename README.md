@@ -240,6 +240,28 @@ Required data files are **automatically downloaded** on first run:
 - CDN keywords and hot websites are embedded in the binary (no download needed)
 - Use `-skip-download` to continue if download fails
 
+### Mirror Fallback
+
+When the direct fetch from `raw.githubusercontent.com` fails — timeout, blocked, rate-limited, any non-200 — the download is retried through public GitHub relays in order, stopping at the first success:
+
+| Order | Endpoint |
+|-------|----------|
+| 1 | direct `raw.githubusercontent.com` |
+| 2 | `https://ghfast.top` |
+| 3 | `https://gh-proxy.com` |
+
+Override the relay list with the `REALITLS_GH_MIRRORS` environment variable (comma-separated, tried in order); set it empty to disable fallback entirely:
+
+```bash
+# Use your own relay
+REALITLS_GH_MIRRORS=https://my-mirror.example ./RealiTLScanner scan -addr 1.2.3.0/24
+
+# Direct only, no fallback
+REALITLS_GH_MIRRORS= ./RealiTLScanner scan -addr 1.2.3.0/24
+```
+
+A relay URL is the full original URL appended to the relay base, e.g. `https://ghfast.top/https://raw.githubusercontent.com/...`. Each attempt has a 90s timeout; the download only fails once every endpoint has failed (`-skip-download` still applies at that point).
+
 ## Project Structure
 
 ```

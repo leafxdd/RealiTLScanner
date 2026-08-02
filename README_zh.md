@@ -238,6 +238,28 @@ docker run --rm realitlscanner scan apple.com www.tesla.com
 - CDN 关键词和热门网站列表已嵌入二进制文件（无需下载）
 - 使用 `-skip-download` 可在下载失败时继续运行
 
+### GitHub 下载失败时自动回退公益中转
+
+直连 `raw.githubusercontent.com` 失败（超时、被墙、限流、非 200）时，会依次改用公益中转重试，成功即停：
+
+| 顺序 | 地址 |
+|------|------|
+| 1 | 直连 `raw.githubusercontent.com` |
+| 2 | `https://ghfast.top` |
+| 3 | `https://gh-proxy.com` |
+
+中转地址由环境变量 `REALITLS_GH_MIRRORS` 覆盖（逗号分隔，按序尝试），设为空值即完全关闭回退：
+
+```bash
+# 换成自己的中转
+REALITLS_GH_MIRRORS=https://my-mirror.example ./RealiTLScanner scan -addr 1.2.3.0/24
+
+# 只走直连，不用中转
+REALITLS_GH_MIRRORS= ./RealiTLScanner scan -addr 1.2.3.0/24
+```
+
+拼接方式是把完整原始 URL 追加到中转地址后面，例如 `https://ghfast.top/https://raw.githubusercontent.com/...`。单次尝试超时 90 秒；所有地址都失败才算下载失败（此时 `-skip-download` 仍可放行）。
+
 ## 项目结构
 
 ```

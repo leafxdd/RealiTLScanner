@@ -216,3 +216,117 @@ func TestDataManager_DownloadHonorsContentLength(t *testing.T) {
 		t.Errorf("expected Content-Length error, got: %v", err)
 	}
 }
+
+func TestDownloadURLs_MirrorsOnlyWhenMirrored(t *testing.T) {
+	t.Setenv(mirrorEnvVar, "https://mirror.example, https://other.example/")
+
+	direct := "https://raw.githubusercontent.com/o/r/f.txt"
+
+	got := downloadURLs(&ManagedFile{DownloadURL: direct})
+	if len(got) != 1 || got[0] != direct {
+		t.Errorf("un-mirrored file should yield only the direct URL, got %v", got)
+	}
+
+	got = downloadURLs(&ManagedFile{DownloadURL: direct, Mirrored: true})
+	want := []string{
+		direct,
+		"https://mirror.example/" + direct,
+		"https://other.example/" + direct, // trailing slash on the base must not double up
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d URLs %v, want %d", len(got), got, len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("URL %d = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestGithubMirrors_EnvDisables(t *testing.T) {
+	t.Setenv(mirrorEnvVar, "")
+	if got := githubMirrors(); len(got) != 0 {
+		t.Errorf("empty %s should disable mirroring, got %v", mirrorEnvVar, got)
+	}
+	if got := downloadURLs(&ManagedFile{DownloadURL: "https://x/y", Mirrored: true}); len(got) != 1 {
+		t.Errorf("mirroring disabled should yield only the direct URL, got %v", got)
+	}
+}
+
+func TestDataManager_FallsBackToMirror(t *testing.T) {
+	var directHits, mirrorHits int64
+	direct := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt64(&directHits, 1)
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer direct.Close()
+	mirror := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt64(&mirrorHits, 1)
+		w.Write([]byte("from-mirror"))
+	}))
+	defer mirror.Close()
+
+	t.Setenv(mirrorEnvVar, mirror.URL)
+
+	dir := t.TempDir()
+	dm := NewDataManager(dir)
+	dm.files["test"] = &ManagedFile{
+		Name:        "test",
+		State:       StateMissing,
+		Path:        filepath.Join(dir, "test.bin"),
+		MaxAge:      time.Hour,
+		DownloadURL: direct.URL,
+		Mirrored:    true,
+	}
+
+	if err := dm.EnsureReady(context.Background(), "test"); err != nil {
+		t.Fatalf("EnsureReady should have recovered via the mirror: %v", err)
+	}
+	if directHits != 1 {
+		t.Errorf("direct URL hit %d times, want 1", directHits)
+	}
+	if mirrorHits != 1 {
+		t.Errorf("mirror hit %d times, want 1", mirrorHits)
+	}
+	if dm.State("test") != StateReady {
+		t.Error("file should be Ready after a successful mirror download")
+	}
+	body, err := os.ReadFile(filepath.Join(dir, "test.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "from-mirror" {
+		t.Errorf("file content = %q, want %q", body, "from-mirror")
+	}
+}
+
+func TestDataManager_AllMirrorsFail(t *testing.T) {
+	fail := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer fail.Close()
+
+	t.Setenv(mirrorEnvVar, fail.URL+","+fail.URL)
+
+	dir := t.TempDir()
+	dm := NewDataManager(dir)
+	dm.files["test"] = &ManagedFile{
+		Name:        "test",
+		State:       StateMissing,
+		Path:        filepath.Join(dir, "test.bin"),
+		MaxAge:      time.Hour,
+		DownloadURL: fail.URL,
+		Mirrored:    true,
+	}
+
+	err := dm.EnsureReady(context.Background(), "test")
+	if err == nil {
+		t.Fatal("expected an error when every candidate fails")
+	}
+	if !strings.Contains(err.Error(), "HTTP 500") {
+		t.Errorf("expected the last attempt's error, got: %v", err)
+	}
+	if dm.State("test") != StateMissing {
+		t.Error("file should be Missing after every candidate failed")
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,9 +33,55 @@ type ManagedFile struct {
 	DownloadURL string
 	Embedded    []byte
 	MaxBytes    int64 // cap for downloaded payload; 0 → use defaultMaxBytes
+	Mirrored    bool  // DownloadURL is a GitHub URL → retry via public relays on failure
 }
 
 const defaultMaxBytes int64 = 200 << 20 // 200 MiB
+
+// downloadTimeout caps a single download attempt. Generous because Country.mmdb
+// is ~8.5 MiB and a public relay is usually slower than raw.githubusercontent.
+const downloadTimeout = 90 * time.Second
+
+// mirrorEnvVar overrides the built-in relay list (comma-separated). Set it to
+// an empty value to disable mirroring entirely.
+const mirrorEnvVar = "REALITLS_GH_MIRRORS"
+
+// defaultGitHubMirrors are public GitHub relays tried in order after a direct
+// download fails — the common case being GitHub being unreachable or throttled
+// from mainland China. Each takes the full original URL appended to its base:
+// https://ghfast.top/https://raw.githubusercontent.com/owner/repo/path.
+var defaultGitHubMirrors = []string{
+	"https://ghfast.top",
+	"https://gh-proxy.com",
+}
+
+func githubMirrors() []string {
+	raw, ok := os.LookupEnv(mirrorEnvVar)
+	if !ok {
+		return defaultGitHubMirrors
+	}
+	var out []string
+	for _, m := range strings.Split(raw, ",") {
+		if m = strings.TrimSpace(m); m != "" {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// downloadURLs returns the direct URL followed by its mirror rewrites. Files
+// not marked Mirrored get the direct URL only — the relays proxy GitHub, so
+// pointing anything else at them just wastes an attempt.
+func downloadURLs(f *ManagedFile) []string {
+	urls := []string{f.DownloadURL}
+	if !f.Mirrored {
+		return urls
+	}
+	for _, m := range githubMirrors() {
+		urls = append(urls, strings.TrimSuffix(m, "/")+"/"+f.DownloadURL)
+	}
+	return urls
+}
 
 type DataManager struct {
 	baseDir string
@@ -70,6 +117,7 @@ func NewDataManager(baseDir string) *DataManager {
 		Path:        filepath.Join(baseDir, "gfwlist.conf"),
 		MaxAge:      7 * 24 * time.Hour,
 		DownloadURL: "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/gfw.txt",
+		Mirrored:    true,
 	}
 	dm.files["geoip"] = &ManagedFile{
 		Name:        "geoip",
@@ -77,6 +125,7 @@ func NewDataManager(baseDir string) *DataManager {
 		Path:        filepath.Join(baseDir, "Country.mmdb"),
 		MaxAge:      30 * 24 * time.Hour,
 		DownloadURL: "https://raw.githubusercontent.com/Loyalsoldier/geoip/release/Country.mmdb",
+		Mirrored:    true,
 	}
 
 	for name, f := range dm.files {
@@ -196,62 +245,85 @@ func (m *DataManager) State(name string) FileState {
 	return StateMissing
 }
 
+// download fetches f from its direct URL, falling back to the public GitHub
+// relays (see downloadURLs) when that fails. Returns the last error if every
+// candidate fails.
 func (m *DataManager) download(ctx context.Context, f *ManagedFile) error {
-	m.mu.Lock()
-	f.State = StateLoading
-	m.mu.Unlock()
+	m.setState(f, StateLoading)
 
+	urls := downloadURLs(f)
+	var lastErr error
+	for i, u := range urls {
+		if i > 0 {
+			slog.Warn("Download failed, retrying via GitHub mirror",
+				"name", f.Name, "mirror", u, "err", lastErr)
+		}
+		written, err := m.fetch(ctx, f, u)
+		if err == nil {
+			m.mu.Lock()
+			f.State = StateReady
+			f.LoadedAt = time.Now()
+			m.mu.Unlock()
+			slog.Info("Downloaded data file",
+				"name", f.Name, "path", f.Path, "bytes", written, "mirrored", i > 0)
+			return nil
+		}
+		lastErr = err
+		// A cancelled context won't recover on the next URL — stop rather than
+		// grinding through the whole mirror list.
+		if ctx.Err() != nil {
+			break
+		}
+	}
+
+	m.setState(f, StateMissing)
+	return lastErr
+}
+
+func (m *DataManager) setState(f *ManagedFile, state FileState) {
+	m.mu.Lock()
+	f.State = state
+	m.mu.Unlock()
+}
+
+// fetch downloads rawURL into f.Path atomically (temp file + rename) and
+// returns the bytes written. It does not touch f.State — download owns that,
+// so a failed attempt doesn't mark the file Missing before the mirrors are
+// tried.
+func (m *DataManager) fetch(ctx context.Context, f *ManagedFile, rawURL string) (int64, error) {
 	maxBytes := f.MaxBytes
 	if maxBytes <= 0 {
 		maxBytes = defaultMaxBytes
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, f.DownloadURL, nil)
+	client := &http.Client{Timeout: downloadTimeout}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		m.mu.Lock()
-		f.State = StateMissing
-		m.mu.Unlock()
-		return err
+		return 0, err
 	}
 
 	resp, err := client.Do(req)
 	if err != nil {
-		m.mu.Lock()
-		f.State = StateMissing
-		m.mu.Unlock()
-		return err
+		return 0, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		m.mu.Lock()
-		f.State = StateMissing
-		m.mu.Unlock()
-		return fmt.Errorf("download failed: HTTP %d", resp.StatusCode)
+		return 0, fmt.Errorf("download failed: HTTP %d", resp.StatusCode)
 	}
 
 	if resp.ContentLength > 0 && resp.ContentLength > maxBytes {
-		m.mu.Lock()
-		f.State = StateMissing
-		m.mu.Unlock()
-		return fmt.Errorf("Content-Length %d exceeds limit %d", resp.ContentLength, maxBytes)
+		return 0, fmt.Errorf("Content-Length %d exceeds limit %d", resp.ContentLength, maxBytes)
 	}
 
 	if err := os.MkdirAll(filepath.Dir(f.Path), 0755); err != nil {
-		m.mu.Lock()
-		f.State = StateMissing
-		m.mu.Unlock()
-		return err
+		return 0, err
 	}
 
 	tmpPath := f.Path + ".tmp"
 	out, err := os.Create(tmpPath)
 	if err != nil {
-		m.mu.Lock()
-		f.State = StateMissing
-		m.mu.Unlock()
-		return err
+		return 0, err
 	}
 
 	// Read at most maxBytes+1 so an over-limit body trips the size check
@@ -266,25 +338,13 @@ func (m *DataManager) download(ctx context.Context, f *ManagedFile) error {
 	}
 	if copyErr != nil {
 		os.Remove(tmpPath)
-		m.mu.Lock()
-		f.State = StateMissing
-		m.mu.Unlock()
-		return copyErr
+		return 0, copyErr
 	}
 
 	if err := os.Rename(tmpPath, f.Path); err != nil {
 		os.Remove(tmpPath)
-		m.mu.Lock()
-		f.State = StateMissing
-		m.mu.Unlock()
-		return err
+		return 0, err
 	}
 
-	m.mu.Lock()
-	f.State = StateReady
-	f.LoadedAt = time.Now()
-	m.mu.Unlock()
-
-	slog.Info("Downloaded data file", "name", f.Name, "path", f.Path, "bytes", written)
-	return nil
+	return written, nil
 }
