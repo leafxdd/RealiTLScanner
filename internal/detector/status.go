@@ -26,10 +26,11 @@ func NewStatusDetector(timeout time.Duration) *StatusDetector {
 				return http.ErrUseLastResponse
 			},
 			Transport: &http.Transport{
-				DialContext:           (&net.Dialer{Timeout: timeout}).DialContext,
-				MaxIdleConns:          100,
-				MaxIdleConnsPerHost:   2,
-				IdleConnTimeout:       30 * time.Second,
+				DialContext: (&net.Dialer{Timeout: timeout}).DialContext,
+				// See RedirectDetector: no reuse to be had across distinct
+				// domains, and an idle conn holding an out-of-spec HEAD body
+				// makes net/http log the whole page.
+				DisableKeepAlives:     true,
 				TLSHandshakeTimeout:   timeout,
 				ResponseHeaderTimeout: timeout,
 			},

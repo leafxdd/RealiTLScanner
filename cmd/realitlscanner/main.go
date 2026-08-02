@@ -724,6 +724,12 @@ func setupLogging(verbose bool) {
 		level = slog.LevelDebug
 	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
+	// SetDefault also bridges the standard log package into slog at Info level,
+	// which promotes net/http's internal chatter (e.g. "Unsolicited response
+	// received on idle HTTP channel", carrying an entire HTML page) into our
+	// stderr — where it lands inside the LiveLog/table region and corrupts the
+	// rendered frame. Demote it to Debug so it only shows under -v.
+	slog.SetLogLoggerLevel(slog.LevelDebug)
 }
 
 func clearProxy() {

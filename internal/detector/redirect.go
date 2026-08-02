@@ -28,10 +28,14 @@ func NewRedirectDetector(timeout time.Duration) *RedirectDetector {
 				return http.ErrUseLastResponse
 			},
 			Transport: &http.Transport{
-				DialContext:           (&net.Dialer{Timeout: timeout}).DialContext,
-				MaxIdleConns:          100,
-				MaxIdleConnsPerHost:   2,
-				IdleConnTimeout:       30 * time.Second,
+				DialContext: (&net.Dialer{Timeout: timeout}).DialContext,
+				// Each probe targets a different domain, so a pooled connection
+				// is almost never reused — and keeping one idle is actively
+				// harmful: servers that answer HEAD with a body (against spec)
+				// leave those bytes buffered on the idle conn, and net/http
+				// logs "Unsolicited response received on idle HTTP channel"
+				// with the whole HTML page through the standard logger.
+				DisableKeepAlives:     true,
 				TLSHandshakeTimeout:   timeout,
 				ResponseHeaderTimeout: timeout,
 			},

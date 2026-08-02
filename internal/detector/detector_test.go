@@ -253,8 +253,22 @@ func TestRedirectDetector_ReuseTransport(t *testing.T) {
 	if !ok {
 		t.Fatal("expected *http.Transport on default client")
 	}
-	if tr.MaxIdleConnsPerHost == 0 {
-		t.Error("expected MaxIdleConnsPerHost > 0 (connection pool reuse)")
+	// The transport is shared across probes, but connections are not: every
+	// probe targets a different domain, and an idle conn holding the body of
+	// an out-of-spec HEAD response makes net/http log the whole page.
+	if !tr.DisableKeepAlives {
+		t.Error("expected DisableKeepAlives (no idle connections between probes)")
+	}
+}
+
+func TestStatusDetector_NoKeepAlive(t *testing.T) {
+	d := NewStatusDetector(2 * time.Second)
+	tr, ok := d.client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatal("expected *http.Transport on default client")
+	}
+	if !tr.DisableKeepAlives {
+		t.Error("expected DisableKeepAlives (no idle connections between probes)")
 	}
 }
 
